@@ -17,7 +17,7 @@ enum ProcessType: String, Codable {
 
 enum ProcessStatus: String, Codable {
     case pending = "待处理"
-    case resume = "简历投递"
+    case resume = "投递"
     case written = "笔试中"
     case interview1 = "一面"
     case interview2 = "二面"

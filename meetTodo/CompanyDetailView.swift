@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 enum InterviewStage: String, Codable, Identifiable, CaseIterable {
-    case resume = "简历投递"
+    case resume = "投递"
     case written = "笔试"
     case interview = "面试"
     case hrInterview = "HR面"
@@ -117,77 +117,119 @@ struct CompanyDetailView: View {
     }
     
     var body: some View {
-        List {
-            // 公司信息头部
-            HStack {
-                Image(systemName: item.companyIcon)
-                    .font(.title)
-                    .foregroundColor(.blue)
-                    .frame(width: 60, height: 60)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(12)
-                
-                VStack(alignment: .leading) {
-                    Text(item.companyName)
-                        .font(.title2.bold())
-                    Text(item.currentStage)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .listRowInsets(EdgeInsets())
-            .padding()
-            .listRowBackground(Color.clear)
-            
-            // 阶段列表
-            ForEach(Array(stages.enumerated()), id: \.element.id) { index, stageItem in
-                StageRow(
-                    item: stageItem,
-                    previousStage: index > 0 ? stages[index - 1] : nil,
-                    onAction: { action in
-                        handleStageAction(stageItem, action)
+        ZStack {
+            List {
+                // 公司信息头部
+                HStack(spacing: 16) {
+                    // 公司图标
+                    ZStack {
+                        Image(systemName: item.companyIcon)
+                            .font(.title)
+                            .foregroundColor(.blue)
+                            .frame(width: 60, height: 60)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(12)
+                        
+                        if item.isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                                .offset(x: 20, y: -20)
+                        }
                     }
-                )
-                .listRowInsets(EdgeInsets())
-                .padding(.horizontal)
-                .listRowBackground(Color.clear)
-            }
-            
-            // 添加其他阶段按钮
-            if !availableStages.isEmpty {
-                Button {
-                    showingStageSelector = true
-                } label: {
-                    Label("添加阶段", systemImage: "plus.circle.fill")
-                        .font(.headline)
-                        .foregroundColor(.blue)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(12)
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.companyName)
+                            .font(.title2.bold())
+                        Text(item.currentStage)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        // 进度条
+                        GeometryReader { geometry in
+                            ZStack(alignment: .leading) {
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.1))
+                                    .frame(height: 4)
+                                    .cornerRadius(2)
+                                
+                                Rectangle()
+                                    .fill(item.status.color)
+                                    .frame(width: geometry.size.width * CGFloat(item.status.percentage) / 100, height: 4)
+                                    .cornerRadius(2)
+                            }
+                        }
+                        .frame(height: 4)
+                        .padding(.top, 4)
+                    }
                 }
+                .padding()
                 .listRowInsets(EdgeInsets())
-                .padding(.horizontal)
                 .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                
+                // 阶段列表
+                let sortedStages = stages.sorted { stage1, stage2 in
+                    let stageOrder: [InterviewStage] = [
+                        .resume,
+                        .written,
+                        .interview,
+                        .hrInterview,
+                        .offer
+                    ]
+                    
+                    let index1 = stageOrder.firstIndex(of: stage1.stage) ?? 0
+                    let index2 = stageOrder.firstIndex(of: stage2.stage) ?? 0
+                    
+                    if index1 == index2 {
+                        // 如果是同一阶段（比如面试），按照轮次排序
+                        if stage1.stage == .interview {
+                            return (stage1.interviewRound ?? 0) < (stage2.interviewRound ?? 0)
+                        }
+                        return stage1.date < stage2.date
+                    }
+                    return index1 < index2
+                }
+                
+                ForEach(Array(sortedStages.enumerated()), id: \.element.id) { index, stage in
+                    StageRow(item: stage,
+                            previousStage: index > 0 ? sortedStages[index - 1] : nil,
+                            onAction: { action in
+                        handleStageAction(stage, action)
+                    })
+                    .listRowInsets(EdgeInsets())
+                    .padding(.horizontal)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
+            }
+            .listStyle(.plain)
+            
+            // 浮动添加按钮
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button {
+                        showingStageSelector = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .frame(width: 60, height: 60)
+                            .background(Color.blue)
+                            .clipShape(Circle())
+                            .shadow(radius: 4, y: 2)
+                    }
+                    .padding(.trailing, 20)
+                }
+                .padding(.bottom, 20)
             }
         }
-        .listStyle(.plain)
-        .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingStageSelector) {
-            StageSelectorView(stages: availableStages) { selectedStage in
-                let interviewRound = selectedStage == .interview ?
-                    (stages.filter { $0.stage == .interview }.count + 1) : nil
-                
-                let newStage = InterviewStageItem(
-                    stage: selectedStage,
-                    interviewRound: interviewRound,
-                    date: Date(),
-                    status: .pending
-                )
-                withAnimation {
-                    stages.append(newStage)
-                    stages.sort { $0.stage.rawValue < $1.stage.rawValue }
-                }
+            StageSelectorView(stages: availableStages) { stage in
+                addStage(stage)
             }
         }
         .sheet(item: $selectedStage) { stage in
@@ -239,7 +281,15 @@ struct CompanyDetailView: View {
         switch action {
         case .setStatus(let newStatus):
             withAnimation {
-                stages[index].status = newStatus
+                // 如果是标记为通过，将之前有阶���也标记为通过
+                if newStatus == .passed {
+                    for i in 0...index {
+                        stages[i].status = .passed
+                    }
+                } else {
+                    stages[index].status = newStatus
+                }
+                
                 if newStatus == .failed {
                     showingFailureAlert = true
                 }
@@ -259,27 +309,48 @@ struct CompanyDetailView: View {
             return
         }
         
-        // 检查是否有未完成的阶段
-        if let currentStage = stages.first(where: { $0.status == .pending }) {
-            item.currentStage = currentStage.displayName
-            updateStatusForStage(currentStage)
-            item.nextStageDate = currentStage.date
+        // 获取最新的阶段（按照阶段顺序和面试轮次排序）
+        let sortedStages = stages.sorted { stage1, stage2 in
+            let stageOrder: [InterviewStage] = [.resume, .written, .interview, .hrInterview, .offer]
+            let index1 = stageOrder.firstIndex(of: stage1.stage) ?? 0
+            let index2 = stageOrder.firstIndex(of: stage2.stage) ?? 0
+            
+            if index1 == index2 {
+                if stage1.stage == .interview {
+                    return (stage1.interviewRound ?? 0) > (stage2.interviewRound ?? 0)
+                }
+                return stage1.date > stage2.date
+            }
+            return index1 > index2
+        }
+        
+        guard let latestStage = sortedStages.first else {
+            item.currentStage = "未开始"
+            item.status = .pending
+            item.nextStageDate = nil
             return
         }
         
-        // 如果所有阶段都通过，使用最后一个阶段的状态
-        if let lastStage = stages.last {
-            item.currentStage = "\(lastStage.displayName)已通过"
-            updateStatusForStage(lastStage)
+        // 根据最新阶段状态更新
+        switch latestStage.status {
+        case .pending:
+            item.currentStage = latestStage.displayName
+            item.nextStageDate = latestStage.date
+            updateStatusFromStage(latestStage)
+            
+        case .passed:
+            item.currentStage = "\(latestStage.displayName)已通过"
             item.nextStageDate = nil
-        } else {
-            item.currentStage = "未开始"
-            item.status = .pending
+            updateStatusFromStage(latestStage)
+            
+        case .failed:
+            item.currentStage = "\(latestStage.displayName)未通过"
+            item.status = .failed
             item.nextStageDate = nil
         }
     }
     
-    private func updateStatusForStage(_ stage: InterviewStageItem) {
+    private func updateStatusFromStage(_ stage: InterviewStageItem) {
         switch stage.stage {
         case .resume:
             item.status = .resume
@@ -301,6 +372,44 @@ struct CompanyDetailView: View {
             item.status = stage.status == .passed ? .offer : .hrInterview
         }
     }
+    
+    private func addStage(_ stage: InterviewStage) {
+        // 获取阶段顺序
+        let stageOrder: [InterviewStage] = [
+            .resume,
+            .written,
+            .interview,
+            .hrInterview,
+            .offer
+        ]
+        
+        // 获取新阶段的索引
+        let newStageIndex = stageOrder.firstIndex(of: stage) ?? 0
+        
+        // 自动将之前的所有阶段标记为通过
+        for existingStage in stages {
+            if let existingIndex = stageOrder.firstIndex(of: existingStage.stage),
+               existingIndex < newStageIndex {
+                if let index = stages.firstIndex(where: { $0.id == existingStage.id }) {
+                    stages[index].status = .passed
+                }
+            }
+        }
+        
+        // 添加新阶段
+        var newStage = InterviewStageItem(stage: stage)
+        
+        // 如果是面试阶段，计算当前轮次
+        if stage == .interview {
+            let currentRound = stages.filter { $0.stage == .interview }.count + 1
+            newStage.interviewRound = currentRound
+        }
+        
+        withAnimation {
+            stages.append(newStage)
+            updateItemStatus()
+        }
+    }
 }
 
 enum StageRowAction {
@@ -313,6 +422,18 @@ struct StageRow: View {
     let previousStage: InterviewStageItem?
     let onAction: (StageRowAction) -> Void
     @State private var showingActionSheet = false
+    
+    var formattedDate: String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+        return timeFormatter.string(from: item.date)
+    }
+    
+    var formattedDay: String {
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "yyyy年MM月dd日"
+        return dayFormatter.string(from: item.date)
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -337,7 +458,7 @@ struct StageRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.displayName)
                         .font(.headline)
-                    Text(item.date, style: .date)
+                    Text(formattedDay)
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
@@ -351,6 +472,12 @@ struct StageRow: View {
                 
                 Spacer()
                 
+                // 时间显示
+                Text(formattedDate)
+                    .font(.title3.bold())
+                    .foregroundColor(item.stage.color)
+                    .frame(minWidth: 60)
+                
                 Button {
                     showingActionSheet = true
                 } label: {
@@ -360,9 +487,9 @@ struct StageRow: View {
             }
             .padding()
             .background(item.status.color)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .confirmationDialog("选择操作", isPresented: $showingActionSheet, titleVisibility: .hidden) {
+        .confirmationDialog("选择操作", isPresented: $showingActionSheet) {
             Button("添加笔记") {
                 onAction(.editNote)
             }
@@ -384,23 +511,64 @@ struct StageSelectorView: View {
     let stages: [InterviewStage]
     let onSelect: (InterviewStage) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedDate = Date()
+    @State private var selectedStage: InterviewStage?
     
     var body: some View {
         NavigationStack {
-            List(stages) { stage in
+            VStack(spacing: 20) {
+                // 阶段选择
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 16) {
+                        ForEach(stages) { stage in
+                            Button {
+                                selectedStage = stage
+                            } label: {
+                                VStack(spacing: 8) {
+                                    Image(systemName: stage.icon)
+                                        .font(.title2)
+                                    Text(stage.rawValue)
+                                        .font(.caption)
+                                }
+                                .foregroundColor(selectedStage == stage ? stage.color : .gray)
+                                .frame(width: 60, height: 70)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(selectedStage == stage ? stage.color.opacity(0.1) : Color.gray.opacity(0.1))
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                
+                // 时间选择
+                DatePicker("选择时间", selection: $selectedDate, displayedComponents: [.date, .hourAndMinute])
+                    .padding(.horizontal)
+                    .environment(\.locale, Locale(identifier: "zh_CN"))
+                
+                // 添加按钮
                 Button {
-                    onSelect(stage)
+                    if let stage = selectedStage {
+                        onSelect(stage)
+                    }
                     dismiss()
                 } label: {
-                    HStack {
-                        Image(systemName: stage.icon)
-                            .foregroundColor(stage.color)
-                        Text(stage.rawValue)
-                            .foregroundColor(.primary)
-                    }
+                    Text("添加")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(selectedStage == nil ? Color.gray : Color.blue)
+                        .cornerRadius(10)
                 }
+                .disabled(selectedStage == nil)
+                .padding(.horizontal)
             }
-            .navigationTitle("选择阶段")
+            .padding(.vertical)
+            .presentationDetents([.height(250)])
+            .presentationDragIndicator(.visible)
+            .navigationTitle("添加阶段")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -454,7 +622,7 @@ struct NoteEditorView: View {
             companyName: "阿里巴巴",
             companyIcon: "building.2.fill",
             processType: .application,
-            currentStage: "简历投递",
+            currentStage: "投递",
             status: .resume
         ))
     }

@@ -23,8 +23,18 @@ struct meetTodoApp: App {
     
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .modelContainer(container)
+            TabView {
+                ContentView()
+                    .tabItem {
+                        Label("列表", systemImage: "list.bullet")
+                    }
+                
+                TodoView()
+                    .tabItem {
+                        Label("待办", systemImage: "checklist")
+                    }
+            }
+            .modelContainer(container)
         }
     }
 }
