@@ -52,6 +52,7 @@ struct InterviewStageItem: Identifiable, Equatable {
     var date: Date
     var note: String
     var status: StageStatus
+    var location: StageLocation?
     
     var displayName: String {
         if stage == .interview, let round = interviewRound {
@@ -65,13 +66,15 @@ struct InterviewStageItem: Identifiable, Equatable {
          interviewRound: Int? = nil,
          date: Date = Date(),
          note: String = "",
-         status: StageStatus = .pending) {
+         status: StageStatus = .pending,
+         location: StageLocation? = nil) {
         self.id = id
         self.stage = stage
         self.interviewRound = interviewRound
         self.date = date
         self.note = note
         self.status = status
+        self.location = location
     }
     
     static func == (lhs: InterviewStageItem, rhs: InterviewStageItem) -> Bool {
@@ -80,7 +83,8 @@ struct InterviewStageItem: Identifiable, Equatable {
         lhs.interviewRound == rhs.interviewRound &&
         lhs.date == rhs.date &&
         lhs.note == rhs.note &&
-        lhs.status == rhs.status
+        lhs.status == rhs.status &&
+        lhs.location == rhs.location
     }
 }
 
@@ -194,6 +198,7 @@ struct CompanyDetailView: View {
                 ForEach(Array(sortedStages.enumerated()), id: \.element.id) { index, stage in
                     StageRow(item: stage,
                             previousStage: index > 0 ? sortedStages[index - 1] : nil,
+                            availableStages: getAvailableStagesForEdit(stage.stage),
                             onAction: { action in
                         handleStageAction(stage, action)
                     })
@@ -228,8 +233,8 @@ struct CompanyDetailView: View {
             }
         }
         .sheet(isPresented: $showingStageSelector) {
-            StageSelectorView(stages: availableStages) { stage in
-                addStage(stage)
+            StageSelectorView(stages: availableStages) { stage, date, location in
+                addStage(stage, date: date, location: location)
             }
         }
         .sheet(item: $selectedStage) { stage in
@@ -253,7 +258,8 @@ struct CompanyDetailView: View {
                     interviewRound: stageData.interviewRound,
                     date: stageData.date,
                     note: stageData.note,
-                    status: StageStatus(rawValue: stageData.status) ?? .pending
+                    status: StageStatus(rawValue: stageData.status) ?? .pending,
+                    location: stageData.location
                 )
             }
         }
@@ -266,7 +272,8 @@ struct CompanyDetailView: View {
                     interviewRound: stage.interviewRound,
                     date: stage.date,
                     note: stage.note,
-                    status: stage.status.rawValue
+                    status: stage.status.rawValue,
+                    location: stage.location
                 )
             }
             
@@ -281,7 +288,6 @@ struct CompanyDetailView: View {
         switch action {
         case .setStatus(let newStatus):
             withAnimation {
-                // 如果是标记为通过，将之前有阶���也标记为通过
                 if newStatus == .passed {
                     for i in 0...index {
                         stages[i].status = .passed
@@ -294,9 +300,91 @@ struct CompanyDetailView: View {
                     showingFailureAlert = true
                 }
                 updateItemStatus()
+                
+                // 如果标记为已完成或失败，移除通知
+                if newStatus != .pending {
+                    let stageData = InterviewStageData(
+                        id: stage.id.uuidString,
+                        stage: stage.stage.rawValue,
+                        interviewRound: stage.interviewRound,
+                        date: stage.date,
+                        note: stage.note,
+                        status: stage.status.rawValue,
+                        location: stage.location
+                    )
+                    NotificationManager.shared.removeNotification(for: item, stageData: stageData)
+                }
             }
+            
         case .editNote:
             selectedStage = stages[index]
+            
+        case .update(let newStage, let newDate, let location):
+            withAnimation {
+                // 如果是需要提醒的阶段，先移除旧的通知
+                if [InterviewStage.interview, .written, .hrInterview].contains(stages[index].stage) {
+                    let oldStageData = InterviewStageData(
+                        id: stage.id.uuidString,
+                        stage: stage.stage.rawValue,
+                        interviewRound: stage.interviewRound,
+                        date: stage.date,
+                        note: stage.note,
+                        status: stage.status.rawValue,
+                        location: stage.location
+                    )
+                    NotificationManager.shared.removeNotification(for: item, stageData: oldStageData)
+                }
+                
+                stages[index].stage = newStage
+                stages[index].date = newDate
+                stages[index].location = location
+                
+                if newStage == .interview {
+                    let interviewCount = stages.filter { $0.stage == .interview }.count
+                    stages[index].interviewRound = interviewCount
+                } else {
+                    stages[index].interviewRound = nil
+                }
+                updateItemStatus()
+                
+                // 如果新阶段需要提醒，设置新的通知
+                if [InterviewStage.interview, .written, .hrInterview].contains(newStage) {
+                    Task {
+                        let updatedStage = stages[index]
+                        await NotificationManager.shared.scheduleNotification(
+                            for: item,
+                            stageData: InterviewStageData(
+                                id: updatedStage.id.uuidString,
+                                stage: updatedStage.stage.rawValue,
+                                interviewRound: updatedStage.interviewRound,
+                                date: updatedStage.date,
+                                note: updatedStage.note,
+                                status: updatedStage.status.rawValue,
+                                location: updatedStage.location
+                            ),
+                            minutesBefore: UserDefaults.standard.integer(forKey: "reminderMinutes")
+                        )
+                    }
+                }
+            }
+            
+        case .delete:
+            // 移除通知
+            let stageData = InterviewStageData(
+                id: stage.id.uuidString,
+                stage: stage.stage.rawValue,
+                interviewRound: stage.interviewRound,
+                date: stage.date,
+                note: stage.note,
+                status: stage.status.rawValue,
+                location: stage.location
+            )
+            NotificationManager.shared.removeNotification(for: item, stageData: stageData)
+            
+            withAnimation {
+                stages.remove(at: index)
+                updateItemStatus()
+            }
         }
     }
     
@@ -373,7 +461,7 @@ struct CompanyDetailView: View {
         }
     }
     
-    private func addStage(_ stage: InterviewStage) {
+    private func addStage(_ stage: InterviewStage, date: Date, location: StageLocation?) {
         // 获取阶段顺序
         let stageOrder: [InterviewStage] = [
             .resume,
@@ -397,7 +485,11 @@ struct CompanyDetailView: View {
         }
         
         // 添加新阶段
-        var newStage = InterviewStageItem(stage: stage)
+        var newStage = InterviewStageItem(
+            stage: stage,
+            date: date,
+            location: location
+        )
         
         // 如果是面试阶段，计算当前轮次
         if stage == .interview {
@@ -408,6 +500,53 @@ struct CompanyDetailView: View {
         withAnimation {
             stages.append(newStage)
             updateItemStatus()
+            
+            // 如果是需要提醒的阶段类型，设置通知
+            if [InterviewStage.interview, .written, .hrInterview].contains(stage) {
+                Task {
+                    await NotificationManager.shared.scheduleNotification(
+                        for: item,
+                        stageData: InterviewStageData(
+                            id: newStage.id.uuidString,
+                            stage: newStage.stage.rawValue,
+                            interviewRound: newStage.interviewRound,
+                            date: newStage.date,
+                            note: newStage.note,
+                            status: newStage.status.rawValue,
+                            location: newStage.location
+                        ),
+                        minutesBefore: UserDefaults.standard.integer(forKey: "reminderMinutes")
+                    )
+                }
+            }
+        }
+    }
+    
+    private func getAvailableStagesForEdit(_ currentStage: InterviewStage) -> [InterviewStage] {
+        let existingStages = Set(stages.map { $0.stage })
+        let hasResume = existingStages.contains(.resume)
+        let hasWritten = existingStages.contains(.written)
+        let hasInterview = existingStages.contains(.interview)
+        let hasOffer = existingStages.contains(.offer)
+        
+        return InterviewStage.allCases.filter { stage in
+            // 当前阶段总
+            if stage == currentStage {
+                return true
+            }
+            
+            switch stage {
+            case .resume:
+                return !hasResume
+            case .written:
+                return hasResume && !hasWritten  // 简历投递后可以笔试
+            case .interview:
+                return hasResume && !hasOffer  // 简历投递后随时可以面试，直到拿到offer
+            case .hrInterview:
+                return hasInterview && !hasOffer  // 有面试后可以HR面
+            case .offer:
+                return hasResume && !hasOffer  // 只要投了简历，随时可以发offer
+            }
         }
     }
 }
@@ -415,13 +554,16 @@ struct CompanyDetailView: View {
 enum StageRowAction {
     case setStatus(StageStatus)
     case editNote
+    case update(InterviewStage, Date, StageLocation?)
+    case delete
 }
 
 struct StageRow: View {
     let item: InterviewStageItem
     let previousStage: InterviewStageItem?
+    let availableStages: [InterviewStage]
     let onAction: (StageRowAction) -> Void
-    @State private var showingActionSheet = false
+    @State private var showingEditor = false
     
     var formattedDate: String {
         let timeFormatter = DateFormatter()
@@ -479,7 +621,7 @@ struct StageRow: View {
                     .frame(minWidth: 60)
                 
                 Button {
-                    showingActionSheet = true
+                    showingEditor = true
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .foregroundColor(.secondary)
@@ -489,93 +631,179 @@ struct StageRow: View {
             .background(item.status.color)
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
-        .confirmationDialog("选择操作", isPresented: $showingActionSheet) {
-            Button("添加笔记") {
-                onAction(.editNote)
-            }
-            
-            Button("标记为通过", role: .none) {
-                onAction(.setStatus(.passed))
-            }
-            
-            Button("标记为未通过", role: .destructive) {
-                onAction(.setStatus(.failed))
-            }
-            
-            Button("取消", role: .cancel) { }
+        .sheet(isPresented: $showingEditor) {
+            StageEditorView(
+                stage: item,
+                availableStages: availableStages,
+                onSave: { newStage, newDate, location in
+                    onAction(.update(newStage, newDate, location))
+                },
+                onDelete: {
+                    onAction(.delete)
+                },
+                onSetStatus: { status in
+                    onAction(.setStatus(status))
+                }
+            )
         }
+    }
+}
+
+struct TimeSelectionView: View {
+    @Binding var selectedDate: Date
+    
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            // 日期和时间选择器
+            HStack(spacing: 8) {
+                DatePicker("", selection: $selectedDate, displayedComponents: [.date])
+                    .environment(\.locale, Locale(identifier: "zh_CN"))
+                    .labelsHidden()
+                
+                DatePicker("", selection: $selectedDate, displayedComponents: [.hourAndMinute])
+                    .environment(\.locale, Locale(identifier: "zh_CN"))
+                    .labelsHidden()
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
     }
 }
 
 struct StageSelectorView: View {
     let stages: [InterviewStage]
-    let onSelect: (InterviewStage) -> Void
+    let onSelect: (InterviewStage, Date, StageLocation?) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selectedDate = Date()
     @State private var selectedStage: InterviewStage?
+    @State private var locationType: LocationType = .online
+    @State private var address: String = ""
+    @State private var opacity: Double = 0
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                // 阶段选择
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 16) {
-                        ForEach(stages) { stage in
-                            Button {
-                                selectedStage = stage
-                            } label: {
-                                VStack(spacing: 8) {
-                                    Image(systemName: stage.icon)
-                                        .font(.title2)
-                                    Text(stage.rawValue)
-                                        .font(.caption)
+            VStack(spacing: 0) {
+                List {
+                    // 阶段选择
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(stages) { stage in
+                                    Button {
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                            selectedStage = stage
+                                        }
+                                    } label: {
+                                        VStack(spacing: 6) {
+                                            Circle()
+                                                .fill(selectedStage == stage ? stage.color : Color.gray.opacity(0.1))
+                                                .frame(width: 44, height: 44)
+                                                .overlay {
+                                                    Image(systemName: stage.icon)
+                                                        .foregroundColor(selectedStage == stage ? .white : .gray)
+                                                }
+                                            Text(stage.rawValue)
+                                                .font(.caption)
+                                                .foregroundColor(selectedStage == stage ? stage.color : .gray)
+                                        }
+                                        .frame(width: 60)
+                                    }
                                 }
-                                .foregroundColor(selectedStage == stage ? stage.color : .gray)
-                                .frame(width: 60, height: 70)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(selectedStage == stage ? stage.color.opacity(0.1) : Color.gray.opacity(0.1))
-                                )
                             }
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 8)
+                        }
+                    } header: {
+                        Text("选择阶段")
+                    }
+                    
+                    // 时间选择
+                    Section {
+                        TimeSelectionView(selectedDate: $selectedDate)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    }
+                    
+                    // 地点选择（仅面试和笔试阶段显示）
+                    if let stage = selectedStage,
+                       [.interview, .written, .hrInterview].contains(stage) {
+                        Section {
+                            VStack(spacing: 12) {
+                                Picker("方式", selection: $locationType) {
+                                    ForEach(LocationType.allCases, id: \.self) { type in
+                                        Text(type.rawValue).tag(type)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                                
+                                HStack {
+                                    Image(systemName: locationType == .online ? "link" : "mappin.and.ellipse")
+                                        .foregroundColor(.blue)
+                                    TextField(locationType == .online ? 
+                                             (stage == .written ? "笔试链接" : "会议链接") :
+                                             (stage == .written ? "笔试地点" : "面试地点"),
+                                             text: $address)
+                                }
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                            }
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: locationType)
+                        } header: {
+                            Text(stage == .written ? "笔试方式" : "面试方式")
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .listStyle(.insetGrouped)
+                
+                // 底部按钮
+                VStack(spacing: 16) {
+                    Button {
+                        if let stage = selectedStage {
+                            var location: StageLocation?
+                            if [.interview, .written, .hrInterview].contains(stage) {
+                                location = StageLocation(type: locationType, address: address)
+                            }
+                            onSelect(stage, selectedDate, location)
+                            dismiss()
+                        }
+                    } label: {
+                        Text("保存")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(selectedStage == nil ? Color.gray : Color.blue)
+                            .cornerRadius(12)
+                    }
+                    .disabled(selectedStage == nil)
+                    
+                    HStack(spacing: 12) {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("取消")
+                                .font(.headline)
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.red.opacity(0.1))
+                                .cornerRadius(12)
                         }
                     }
-                    .padding(.horizontal)
                 }
-                
-                // 时间选择
-                DatePicker("选择时间", selection: $selectedDate, displayedComponents: [.date, .hourAndMinute])
-                    .padding(.horizontal)
-                    .environment(\.locale, Locale(identifier: "zh_CN"))
-                
-                // 添加按钮
-                Button {
-                    if let stage = selectedStage {
-                        onSelect(stage)
-                    }
-                    dismiss()
-                } label: {
-                    Text("添加")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(selectedStage == nil ? Color.gray : Color.blue)
-                        .cornerRadius(10)
-                }
-                .disabled(selectedStage == nil)
-                .padding(.horizontal)
+                .padding(16)
+                .background(Color(UIColor.systemBackground))
             }
-            .padding(.vertical)
-            .presentationDetents([.height(250)])
-            .presentationDragIndicator(.visible)
             .navigationTitle("添加阶段")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("取消") {
-                        dismiss()
-                    }
-                }
+            .opacity(opacity)
+        }
+        .presentationDetents([.height(UIScreen.main.bounds.height * 0.75)])
+        .presentationDragIndicator(.visible)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.3)) {
+                opacity = 1
             }
         }
     }
@@ -613,6 +841,247 @@ struct NoteEditorView: View {
                     }
                 }
         }
+    }
+}
+
+// 修改地点选择组件
+struct LocationSelectionView: View {
+    let stage: InterviewStage
+    @Binding var locationType: LocationType
+    @Binding var address: String
+    @State private var onlineAddress: String = ""
+    @State private var offlineAddress: String = ""
+    
+    init(stage: InterviewStage, locationType: Binding<LocationType>, address: Binding<String>) {
+        self.stage = stage
+        self._locationType = locationType
+        self._address = address
+        self._onlineAddress = State(initialValue: "")
+        self._offlineAddress = State(initialValue: "")
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(stage == .written ? "笔试方式" : "面试方式")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            Picker("", selection: $locationType) {
+                ForEach(LocationType.allCases, id: \.self) { type in
+                    Text(type.rawValue).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: locationType) { _, newValue in
+                // 切换类型时保存当前地址并恢复之前的地址
+                if newValue == .online {
+                    offlineAddress = address
+                    address = onlineAddress
+                } else {
+                    onlineAddress = address
+                    address = offlineAddress
+                }
+            }
+            
+            HStack {
+                Image(systemName: locationType == .online ? "link" : "mappin.and.ellipse")
+                    .foregroundColor(.blue)
+                    .frame(width: 24)
+                TextField(locationType == .online ? 
+                         (stage == .written ? "笔试链接" : "会议链接") :
+                         (stage == .written ? "笔试地点" : "面试地点"),
+                         text: $address)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.gray.opacity(0.05))
+            .cornerRadius(8)
+        }
+        .padding(.horizontal)
+        .animation(.spring(duration: 0.5, bounce: 0.3), value: stage)
+    }
+}
+
+// 修改 StageEditorView
+struct StageEditorView: View {
+    let stage: InterviewStageItem
+    let availableStages: [InterviewStage]
+    let onSave: (InterviewStage, Date, StageLocation?) -> Void
+    let onDelete: () -> Void
+    let onSetStatus: (StageStatus) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedStage: InterviewStage
+    @State private var selectedDate: Date
+    @State private var locationType: LocationType = .online
+    @State private var address: String = ""
+    @State private var sheetHeight: CGFloat = UIScreen.main.bounds.height * 0.4
+    
+    private var uniqueAvailableStages: [InterviewStage] {
+        Array(Set(availableStages)).sorted { stage1, stage2 in
+            let stageOrder: [InterviewStage] = [
+                .resume,
+                .written,
+                .interview,
+                .hrInterview,
+                .offer
+            ]
+            let index1 = stageOrder.firstIndex(of: stage1) ?? 0
+            let index2 = stageOrder.firstIndex(of: stage2) ?? 0
+            return index1 < index2
+        }
+    }
+    
+    init(stage: InterviewStageItem,
+         availableStages: [InterviewStage],
+         onSave: @escaping (InterviewStage, Date, StageLocation?) -> Void,
+         onDelete: @escaping () -> Void,
+         onSetStatus: @escaping (StageStatus) -> Void) {
+        self.stage = stage
+        self.availableStages = availableStages
+        self.onSave = onSave
+        self.onDelete = onDelete
+        self.onSetStatus = onSetStatus
+        _selectedStage = State(initialValue: stage.stage)
+        _selectedDate = State(initialValue: stage.date)
+        _locationType = State(initialValue: stage.location?.type ?? .online)
+        _address = State(initialValue: stage.location?.address ?? "")
+    }
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                List {
+                    // 阶段选择
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(uniqueAvailableStages) { stage in
+                                    Button {
+                                        selectedStage = stage
+                                    } label: {
+                                        VStack(spacing: 6) {
+                                            Circle()
+                                                .fill(selectedStage == stage ? stage.color : Color.gray.opacity(0.1))
+                                                .frame(width: 44, height: 44)
+                                                .overlay {
+                                                    Image(systemName: stage.icon)
+                                                        .foregroundColor(selectedStage == stage ? .white : .gray)
+                                                }
+                                            Text(stage.rawValue)
+                                                .font(.caption)
+                                                .foregroundColor(selectedStage == stage ? stage.color : .gray)
+                                        }
+                                        .frame(width: 60)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 8)
+                        }
+                    } header: {
+                        Text("选择阶段")
+                    }
+                    
+                    // 时间选择
+                    Section {
+                        TimeSelectionView(selectedDate: $selectedDate)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    }
+                    
+                    // 地点选择（仅面试和笔试阶段显示）
+                    if [.interview, .written, .hrInterview].contains(selectedStage) {
+                        Section {
+                            Picker("方式", selection: $locationType) {
+                                ForEach(LocationType.allCases, id: \.self) { type in
+                                    Text(type.rawValue).tag(type)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            
+                            HStack {
+                                Image(systemName: locationType == .online ? "link" : "mappin.and.ellipse")
+                                    .foregroundColor(.blue)
+                                TextField(locationType == .online ? 
+                                         (selectedStage == .written ? "笔试链接" : "会议链接") :
+                                         (selectedStage == .written ? "笔试地点" : "面试地点"),
+                                         text: $address)
+                            }
+                        } header: {
+                            Text(selectedStage == .written ? "笔试方式" : "面试方式")
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+                
+                // 底部按钮
+                VStack(spacing: 16) {
+                    Button {
+                        var location: StageLocation?
+                        if [.interview, .written, .hrInterview].contains(selectedStage) {
+                            location = StageLocation(type: locationType, address: address)
+                        }
+                        onSave(selectedStage, selectedDate, location)
+                        dismiss()
+                    } label: {
+                        Text("保存")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(12)
+                    }
+                    
+                    HStack(spacing: 12) {
+                        Button {
+                            onDelete()
+                            dismiss()
+                        } label: {
+                            Text("删除")
+                                .font(.headline)
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.red.opacity(0.1))
+                                .cornerRadius(12)
+                        }
+                        
+                        Button {
+                            onSetStatus(.passed)
+                            dismiss()
+                        } label: {
+                            Text("通过")
+                                .font(.headline)
+                                .foregroundColor(.green)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.green.opacity(0.1))
+                                .cornerRadius(12)
+                        }
+                        
+                        Button {
+                            onSetStatus(.failed)
+                            dismiss()
+                        } label: {
+                            Text("未通过")
+                                .font(.headline)
+                                .foregroundColor(.orange)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.orange.opacity(0.1))
+                                .cornerRadius(12)
+                        }
+                    }
+                }
+                .padding(16)
+                .background(Color(UIColor.systemBackground))
+            }
+            .navigationTitle("编辑阶段")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.height(UIScreen.main.bounds.height * 0.7)])
+        .presentationDragIndicator(.visible)
     }
 }
 

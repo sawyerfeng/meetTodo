@@ -9,6 +9,8 @@ struct TodoView: View {
     @State private var showingAlert = false
     @State private var alertMessage = ""
     @State private var showingSettingsAlert = false
+    @AppStorage("enableReminder") private var enableReminder = true
+    @AppStorage("reminderMinutes") private var reminderMinutes = 60
     
     var todayTodos: [(Item, InterviewStageData)] {
         let calendar = Calendar.current
@@ -80,7 +82,45 @@ struct TodoView: View {
             } message: {
                 Text(alertMessage)
             }
+            .task {
+                // 在视图加载时检查并设置所有通知
+                if enableReminder {
+                    await setupAllNotifications()
+                }
+            }
+            .onChange(of: enableReminder) { _, newValue in
+                if newValue {
+                    // 当开启提醒时，设置所有通知
+                    Task {
+                        await setupAllNotifications()
+                    }
+                } else {
+                    // 当关闭提醒时，移除所有通知
+                    NotificationManager.shared.removeAllNotifications()
+                }
+            }
+            .onChange(of: reminderMinutes) { _, _ in
+                // 当提醒时间改变时，重新设置所有通知
+                if enableReminder {
+                    Task {
+                        NotificationManager.shared.removeAllNotifications()
+                        await setupAllNotifications()
+                    }
+                }
+            }
         }
+    }
+    
+    private func setupAllNotifications() async {
+        for (item, stageData) in todayTodos {
+            await NotificationManager.shared.scheduleNotification(
+                for: item,
+                stageData: stageData,
+                minutesBefore: reminderMinutes
+            )
+        }
+        // 检查通知是否设置成功
+        await NotificationManager.shared.checkPendingNotifications()
     }
     
     private func syncToCalendar(item: Item, stageData: InterviewStageData) async {
