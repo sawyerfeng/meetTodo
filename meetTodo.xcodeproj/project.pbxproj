@@ -29,9 +29,22 @@
 		7B9758002D0547020043666A /* meetTodoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = meetTodoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7B9758462D05DF5C0043666A /* Exceptions for "meetTodo" folder in "meetTodo" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7B9757E32D0547000043666A /* meetTodo */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		7B9757E62D0547000043666A /* meetTodo */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7B9758462D05DF5C0043666A /* Exceptions for "meetTodo" folder in "meetTodo" target */,
+			);
 			path = meetTodo;
 			sourceTree = "<group>";
 		};
@@ -399,6 +412,8 @@
 				DEVELOPMENT_TEAM = WFFBFRM3BL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = meetTodo/Info.plist;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "meetTodo 需要访问日历来同步您的面试安排";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -428,6 +443,8 @@
 				DEVELOPMENT_TEAM = WFFBFRM3BL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = meetTodo/Info.plist;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "meetTodo 需要访问日历来同步您的面试安排";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

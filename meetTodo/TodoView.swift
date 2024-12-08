@@ -1,10 +1,14 @@
 import SwiftUI
 import SwiftData
+import EventKit
 
 struct TodoView: View {
     @Query(sort: [
         SortDescriptor<Item>(\.timestamp, order: .reverse)
     ]) private var items: [Item]
+    @State private var showingAlert = false
+    @State private var alertMessage = ""
+    @State private var showingSettingsAlert = false
     
     var todayTodos: [(Item, InterviewStageData)] {
         let calendar = Calendar.current
@@ -33,13 +37,151 @@ struct TodoView: View {
                     )
                 } else {
                     ForEach(todayTodos, id: \.1.id) { item, stageData in
-                        NavigationLink(destination: CompanyDetailView(item: item)) {
+                        NavigationLink {
+                            CompanyDetailView(item: item)
+                        } label: {
                             TodoRowView(item: item, stageData: stageData)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button {
+                                Task {
+                                    await syncToCalendar(item: item, stageData: stageData)
+                                }
+                            } label: {
+                                Label("添加到日历", systemImage: "calendar.badge.plus")
+                            }
+                            .tint(.blue)
                         }
                     }
                 }
             }
             .navigationTitle("今日待办")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        Task {
+                            await syncAllToCalendar()
+                        }
+                    } label: {
+                        Image(systemName: "calendar.badge.plus")
+                    }
+                }
+            }
+            .alert("需要权限", isPresented: $showingSettingsAlert) {
+                Button("取消", role: .cancel) { }
+                Button("前往设置") {
+                    CalendarManager.shared.openSettings()
+                }
+            } message: {
+                Text(alertMessage)
+            }
+            .alert("同步日历", isPresented: $showingAlert) {
+                Button("确定") { }
+            } message: {
+                Text(alertMessage)
+            }
+        }
+    }
+    
+    private func syncToCalendar(item: Item, stageData: InterviewStageData) async {
+        // 检查日历权限状态
+        let authStatus = CalendarManager.shared.checkAuthorizationStatus()
+        
+        switch authStatus {
+        case .notDetermined:
+            // 首次请求权限
+            if await CalendarManager.shared.requestAccess() {
+                // 获得权限后，添加日历事件
+                let (success, message) = await CalendarManager.shared.addEvent(
+                    title: "\(item.companyName) - \(stageData.stage)",
+                    startDate: stageData.date,
+                    notes: stageData.note
+                )
+                await MainActor.run {
+                    alertMessage = message
+                    showingAlert = true
+                }
+            } else {
+                await MainActor.run {
+                    alertMessage = "需要日历权限才能添加提醒，是否前往设置？"
+                    showingSettingsAlert = true
+                }
+            }
+            
+        case .authorized:
+            // 已有权限，直接添加日历事件
+            let (success, message) = await CalendarManager.shared.addEvent(
+                title: "\(item.companyName) - \(stageData.stage)",
+                startDate: stageData.date,
+                notes: stageData.note
+            )
+            await MainActor.run {
+                alertMessage = message
+                showingAlert = true
+            }
+            
+        case .denied, .restricted:
+            // 权限被拒绝，显示设置引导
+            await MainActor.run {
+                alertMessage = "需要日历权限才能添加提醒，是否前往设置？"
+                showingSettingsAlert = true
+            }
+            
+        @unknown default:
+            break
+        }
+    }
+    
+    private func syncAllToCalendar() async {
+        // 检查日历权限状态
+        let authStatus = CalendarManager.shared.checkAuthorizationStatus()
+        
+        switch authStatus {
+        case .notDetermined:
+            // 首次请求权限
+            if await CalendarManager.shared.requestAccess() {
+                await syncAllEvents()
+            } else {
+                await MainActor.run {
+                    alertMessage = "需要日历权限才能添加提醒，是否前往设置？"
+                    showingSettingsAlert = true
+                }
+            }
+            
+        case .authorized:
+            // 已有权限，直接同步所有事件
+            await syncAllEvents()
+            
+        case .denied, .restricted:
+            // 权限被拒绝，显示设置引导
+            await MainActor.run {
+                alertMessage = "需要日历权限才能添加提醒，是否前往设置？"
+                showingSettingsAlert = true
+            }
+            
+        @unknown default:
+            break
+        }
+    }
+    
+    private func syncAllEvents() async {
+        var successCount = 0
+        
+        for (item, stageData) in todayTodos {
+            let (success, _) = await CalendarManager.shared.addEvent(
+                title: "\(item.companyName) - \(stageData.stage)",
+                startDate: stageData.date,
+                notes: stageData.note
+            )
+            
+            if success {
+                successCount += 1
+            }
+        }
+        
+        await MainActor.run {
+            alertMessage = "成功同步 \(successCount) 个待办到系统日历"
+            showingAlert = true
         }
     }
 }
