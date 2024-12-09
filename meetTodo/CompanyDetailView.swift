@@ -96,6 +96,18 @@ struct CompanyDetailView: View {
     @State private var showingNoteEditor = false
     @State private var selectedStage: InterviewStageItem?
     @State private var showingFailureAlert = false
+    @State private var showingStageDetail = false
+    @State private var stageForDetail: InterviewStageItem?
+    @State private var showingIconPicker = false
+    @State private var selectedImage: UIImage?
+    @State private var selectedIcon: String
+    @State private var isEditingName = false
+    @State private var editingName: String = ""
+    
+    init(item: Item) {
+        self.item = item
+        _selectedIcon = State(initialValue: item.companyIcon)
+    }
     
     var availableStages: [InterviewStage] {
         let existingStages = Set(stages.map { $0.stage })
@@ -120,31 +132,86 @@ struct CompanyDetailView: View {
         }
     }
     
+    func getAvailableStagesForEdit(_ currentStage: InterviewStage) -> [InterviewStage] {
+        let existingStages = Set(stages.map { $0.stage })
+        let hasResume = existingStages.contains(.resume)
+        let hasWritten = existingStages.contains(.written)
+        let hasInterview = existingStages.contains(.interview)
+        let hasOffer = existingStages.contains(.offer)
+        
+        return InterviewStage.allCases.filter { stage in
+            // 当前阶段总是可选
+            if stage == currentStage {
+                return true
+            }
+            
+            switch stage {
+            case .resume:
+                return !hasResume
+            case .written:
+                return hasResume && !hasWritten  // 简历投递后可以笔试
+            case .interview:
+                return hasResume && !hasOffer  // 简历投递后随时可以面试，直到拿到offer
+            case .hrInterview:
+                return hasInterview && !hasOffer  // 有面试后可以HR面
+            case .offer:
+                return hasResume && !hasOffer  // 只要投了简历，随时可以发offer
+            }
+        }
+    }
+    
     var body: some View {
         ZStack {
             List {
                 // 公司信息头部
-                HStack(spacing: 16) {
+                VStack(spacing: 20) {
                     // 公司图标
-                    ZStack {
-                        Image(systemName: item.companyIcon)
-                            .font(.title)
-                            .foregroundColor(.blue)
-                            .frame(width: 60, height: 60)
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(12)
-                        
-                        if item.isPinned {
-                            Image(systemName: "pin.fill")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .offset(x: 20, y: -20)
+                    Button {
+                        showingIconPicker = true
+                    } label: {
+                        ZStack {
+                            if let image = selectedImage {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 120, height: 120)
+                                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                            } else if let iconData = item.iconData,
+                                     let uiImage = UIImage(data: iconData) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 120, height: 120)
+                                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                            } else {
+                                RoundedRectangle(cornerRadius: 24)
+                                    .fill(Color.blue.opacity(0.1))
+                                    .frame(width: 120, height: 120)
+                                    .overlay {
+                                        Image(systemName: selectedIcon)
+                                            .font(.system(size: 50))
+                                            .foregroundColor(.blue)
+                                    }
+                            }
+                            
+                            if item.isPinned {
+                                Image(systemName: "pin.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                                    .offset(x: 45, y: -45)
+                            }
                         }
                     }
                     
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.companyName)
-                            .font(.title2.bold())
+                    VStack(spacing: 8) {
+                        makeTextField(item.companyName, isEditing: isEditingName, onSubmit: { newValue in
+                            if !newValue.isEmpty {
+                                item.companyName = newValue
+                                try? modelContext.save()
+                            }
+                            isEditingName = false
+                        })
+                        
                         Text(item.currentStage)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -167,10 +234,10 @@ struct CompanyDetailView: View {
                         .padding(.top, 4)
                     }
                 }
-                .padding()
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
+                .padding()
                 
                 // 阶段列表
                 let sortedStages = stages.sorted { stage1, stage2 in
@@ -206,6 +273,10 @@ struct CompanyDetailView: View {
                     .padding(.horizontal)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
+                    .onTapGesture {
+                        stageForDetail = stage
+                        showingStageDetail = true
+                    }
                 }
             }
             .listStyle(.plain)
@@ -232,6 +303,13 @@ struct CompanyDetailView: View {
                 .padding(.bottom, 20)
             }
         }
+        .navigationDestination(isPresented: $showingStageDetail) {
+            if let stage = stageForDetail {
+                StageDetailView(item: stage, availableStages: availableStages) { action in
+                    handleStageAction(stage, action)
+                }
+            }
+        }
         .sheet(isPresented: $showingStageSelector) {
             StageSelectorView(stages: availableStages) { stage, date, location in
                 addStage(stage, date: date, location: location)
@@ -242,6 +320,27 @@ struct CompanyDetailView: View {
                 if let index = stages.firstIndex(where: { $0.id == stage.id }) {
                     stages[index].note = newNote
                 }
+            }
+        }
+        .sheet(isPresented: $showingIconPicker) {
+            CompanyIconPicker(selectedImage: $selectedImage, selectedIcon: $selectedIcon)
+        }
+        .onChange(of: selectedImage) { _, newImage in
+            if let image = newImage {
+                // 压缩图片数据
+                if let imageData = image.jpegData(compressionQuality: 0.7) {
+                    item.iconData = imageData
+                    item.companyIcon = ""  // 清空系统图标
+                    try? modelContext.save()
+                }
+            }
+        }
+        .onChange(of: selectedIcon) { _, newIcon in
+            if newIcon != item.companyIcon {
+                item.companyIcon = newIcon
+                item.iconData = nil  // 清空自定义图片数据
+                selectedImage = nil  // 清空选中的图片
+                try? modelContext.save()
             }
         }
         .alert("不要灰心", isPresented: $showingFailureAlert) {
@@ -522,30 +621,50 @@ struct CompanyDetailView: View {
         }
     }
     
-    private func getAvailableStagesForEdit(_ currentStage: InterviewStage) -> [InterviewStage] {
-        let existingStages = Set(stages.map { $0.stage })
-        let hasResume = existingStages.contains(.resume)
-        let hasWritten = existingStages.contains(.written)
-        let hasInterview = existingStages.contains(.interview)
-        let hasOffer = existingStages.contains(.offer)
-        
-        return InterviewStage.allCases.filter { stage in
-            // 当前阶段总
-            if stage == currentStage {
-                return true
-            }
-            
-            switch stage {
-            case .resume:
-                return !hasResume
-            case .written:
-                return hasResume && !hasWritten  // 简历投递后可以笔试
-            case .interview:
-                return hasResume && !hasOffer  // 简历投递后随时可以面试，直到拿到offer
-            case .hrInterview:
-                return hasInterview && !hasOffer  // 有面试后可以HR面
-            case .offer:
-                return hasResume && !hasOffer  // 只要投了简历，随时可以发offer
+    private func makeTextField(_ text: String, isEditing: Bool, onSubmit: @escaping (String) -> Void) -> some View {
+        VStack {
+            if isEditing {
+                TextField("", text: .init(
+                    get: { text },
+                    set: { newValue in
+                        if !newValue.isEmpty {
+                            onSubmit(newValue)
+                        }
+                    }
+                ))
+                .font(.title2.bold())
+                .multilineTextAlignment(.center)
+                .padding(8)
+                .background(Color(uiColor: .systemBackground))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+                .submitLabel(.done)
+                .onAppear {
+                    // 预加载输入法
+                    let _ = UITextInputMode.activeInputModes
+                    
+                    // 确保输入法会话有效
+                    if let clientClass = NSClassFromString("RTIInputSystemClient") {
+                        let selector = NSSelectorFromString("currentTextInputSession")
+                        let methodIMP = class_getClassMethod(clientClass, selector)
+                        if methodIMP != nil {
+                            typealias FunctionType = @convention(c) (AnyClass, Selector) -> Void
+                            let method = unsafeBitCast(method_getImplementation(methodIMP!), to: FunctionType.self)
+                            method(clientClass, selector)
+                        }
+                    }
+                }
+            } else {
+                Button {
+                    onSubmit(text)
+                } label: {
+                    Text(text)
+                        .font(.title2.bold())
+                        .foregroundColor(.primary)
+                }
             }
         }
     }
@@ -564,17 +683,12 @@ struct StageRow: View {
     let availableStages: [InterviewStage]
     let onAction: (StageRowAction) -> Void
     @State private var showingEditor = false
+    @State private var showingMapActionSheet = false
     
-    var formattedDate: String {
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
-        return timeFormatter.string(from: item.date)
-    }
-    
-    var formattedDay: String {
-        let dayFormatter = DateFormatter()
-        dayFormatter.dateFormat = "yyyy年MM月dd日"
-        return dayFormatter.string(from: item.date)
+    var formattedDateTime: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年MM月dd日 HH:mm"
+        return formatter.string(from: item.date)
     }
     
     var body: some View {
@@ -600,9 +714,11 @@ struct StageRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.displayName)
                         .font(.headline)
-                    Text(formattedDay)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
+                    
+                    Text(formattedDateTime)
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
                     
                     if !item.note.isEmpty {
                         Text(item.note)
@@ -614,37 +730,97 @@ struct StageRow: View {
                 
                 Spacer()
                 
-                // 时间显示
-                Text(formattedDate)
-                    .font(.title3.bold())
-                    .foregroundColor(item.stage.color)
-                    .frame(minWidth: 60)
-                
-                Button {
-                    showingEditor = true
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundColor(.secondary)
+                // 状态图标
+                HStack(spacing: 8) {
+                    if let location = item.location {
+                        Button {
+                            showingMapActionSheet = true
+                        } label: {
+                            Image(systemName: location.type == .online ? "link" : "mappin.and.ellipse")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    
+                    if !item.note.isEmpty {
+                        Image(systemName: "note.text")
+                            .foregroundColor(.blue)
+                    }
                 }
             }
             .padding()
             .background(item.status.color)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-        .sheet(isPresented: $showingEditor) {
-            StageEditorView(
-                stage: item,
-                availableStages: availableStages,
-                onSave: { newStage, newDate, location in
-                    onAction(.update(newStage, newDate, location))
-                },
-                onDelete: {
-                    onAction(.delete)
-                },
-                onSetStatus: { status in
-                    onAction(.setStatus(status))
+            .confirmationDialog("选择地图应用", isPresented: $showingMapActionSheet) {
+                if let location = item.location {
+                    if location.type == .offline {
+                        Button("在高德地图中打开") {
+                            openInAmap(address: location.address)
+                        }
+                        Button("在苹果地图中打开") {
+                            openInAppleMaps(address: location.address)
+                        }
+                    } else {
+                        Button("打开链接") {
+                            if let url = URL(string: location.address) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
+                    Button("取消", role: .cancel) { }
                 }
-            )
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    onAction(.delete)
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+                
+                Button {
+                    onAction(.setStatus(.failed))
+                } label: {
+                    Label("未通过", systemImage: "xmark.circle")
+                }
+                .tint(.orange)
+                
+                Button {
+                    onAction(.setStatus(.passed))
+                } label: {
+                    Label("通过", systemImage: "checkmark.circle")
+                }
+                .tint(.green)
+            }
+        }
+    }
+    
+    private func openInAmap(address: String) {
+        let encodedAddress = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        
+        // 尝试使用新版URL Scheme
+        let urlString = "amap://poi?sourceApplication=meetTodo&keywords=\(encodedAddress)"
+        let backupUrlString = "iosamap://path?sourceApplication=meetTodo&dname=\(encodedAddress)&dev=0&t=0"
+        
+        if let url = URL(string: urlString) {
+            UIApplication.shared.open(url) { success in
+                if !success, let backupUrl = URL(string: backupUrlString) {
+                    UIApplication.shared.open(backupUrl) { success in
+                        if !success {
+                            // 如果都无法打开，跳转到App Store
+                            if let appStoreURL = URL(string: "https://apps.apple.com/cn/app/id461703208") {
+                                UIApplication.shared.open(appStoreURL)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func openInAppleMaps(address: String) {
+        let encodedAddress = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let urlString = "http://maps.apple.com/?q=\(encodedAddress)"
+        if let url = URL(string: urlString) {
+            UIApplication.shared.open(url)
         }
     }
 }
@@ -873,7 +1049,7 @@ struct LocationSelectionView: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: locationType) { _, newValue in
-                // 切换类型时保存当前地址并恢复之前的地址
+                // 换类型时保存当前地址并恢复之前的地址
                 if newValue == .online {
                     offlineAddress = address
                     address = onlineAddress
@@ -1082,6 +1258,325 @@ struct StageEditorView: View {
         }
         .presentationDetents([.height(UIScreen.main.bounds.height * 0.7)])
         .presentationDragIndicator(.visible)
+    }
+}
+
+struct StageDetailView: View {
+    let item: InterviewStageItem
+    let availableStages: [InterviewStage]
+    let onAction: (StageRowAction) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @State private var showingEditor = false
+    @State private var showingMapActionSheet = false
+    
+    var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年MM月dd日 HH:mm"
+        return formatter.string(from: item.date)
+    }
+    
+    var body: some View {
+        List {
+            // 阶段信息
+            Section {
+                HStack(spacing: 16) {
+                    Circle()
+                        .fill(item.stage.color)
+                        .frame(width: 60, height: 60)
+                        .overlay {
+                            Image(systemName: item.stage.icon)
+                                .foregroundColor(.white)
+                                .font(.title2)
+                        }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.displayName)
+                            .font(.title2.bold())
+                        Text(formattedDate)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
+            }
+            
+            // 地点信息（如果有）
+            if let location = item.location {
+                Section {
+                    HStack {
+                        Image(systemName: location.type == .online ? "link" : "mappin.and.ellipse")
+                            .foregroundColor(.blue)
+                        Text(location.type == .online ? "在线" : "线下")
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        if location.type == .offline {
+                            Button {
+                                showingMapActionSheet = true
+                            } label: {
+                                Image(systemName: "map")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    
+                    if !location.address.isEmpty {
+                        if location.type == .online {
+                            Button {
+                                if let url = URL(string: location.address) {
+                                    UIApplication.shared.open(url)
+                                }
+                            } label: {
+                                Text(location.address)
+                                    .foregroundColor(.blue)
+                            }
+                        } else {
+                            Text(location.address)
+                        }
+                    }
+                }
+            }
+            
+            // 笔记（如果有）
+            if !item.note.isEmpty {
+                Section("笔记") {
+                    Text(item.note)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button {
+                        showingEditor = true
+                    } label: {
+                        Label("编辑", systemImage: "pencil")
+                    }
+                    
+                    Button {
+                        onAction(.setStatus(.passed))
+                        dismiss()
+                    } label: {
+                        Label("标记为通过", systemImage: "checkmark.circle")
+                    }
+                    
+                    Button {
+                        onAction(.setStatus(.failed))
+                        dismiss()
+                    } label: {
+                        Label("标记为未通过", systemImage: "xmark.circle")
+                    }
+                    
+                    Button(role: .destructive) {
+                        onAction(.delete)
+                        dismiss()
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+        .sheet(isPresented: $showingEditor) {
+            StageEditorView(
+                stage: item,
+                availableStages: availableStages,
+                onSave: { newStage, newDate, location in
+                    onAction(.update(newStage, newDate, location))
+                    dismiss()
+                },
+                onDelete: {
+                    onAction(.delete)
+                    dismiss()
+                },
+                onSetStatus: { status in
+                    onAction(.setStatus(status))
+                    dismiss()
+                }
+            )
+        }
+        .confirmationDialog("选择地图应用", isPresented: $showingMapActionSheet) {
+            if let location = item.location {
+                Button("在高德地图中打开") {
+                    openInAmap(address: location.address)
+                }
+                Button("在苹果地图中打开") {
+                    openInAppleMaps(address: location.address)
+                }
+                Button("取消", role: .cancel) { }
+            }
+        }
+    }
+    
+    private func openInAmap(address: String) {
+        let encodedAddress = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        
+        // 尝试使用新版URL Scheme
+        let urlString = "amap://poi?sourceApplication=meetTodo&keywords=\(encodedAddress)"
+        let backupUrlString = "iosamap://path?sourceApplication=meetTodo&dname=\(encodedAddress)&dev=0&t=0"
+        
+        if let url = URL(string: urlString) {
+            UIApplication.shared.open(url) { success in
+                if !success, let backupUrl = URL(string: backupUrlString) {
+                    UIApplication.shared.open(backupUrl) { success in
+                        if !success {
+                            // 如果都无法打开，跳转到App Store
+                            if let appStoreURL = URL(string: "https://apps.apple.com/cn/app/id461703208") {
+                                UIApplication.shared.open(appStoreURL)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func openInAppleMaps(address: String) {
+        let encodedAddress = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let urlString = "http://maps.apple.com/?q=\(encodedAddress)"
+        if let url = URL(string: urlString) {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
+struct ImagePicker: UIViewControllerRepresentable {
+    @Binding var image: UIImage?
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: ImagePicker
+        
+        init(_ parent: ImagePicker) {
+            self.parent = parent
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.image = image
+            }
+            parent.dismiss()
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
+}
+
+struct CompanyIconPicker: View {
+    @Binding var selectedImage: UIImage?
+    @Binding var selectedIcon: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingImagePicker = false
+    
+    // 内置图标列表
+    private let builtInIcons = [
+        "building.2.fill",
+        "building.columns.fill",
+        "building.fill",
+        "building.2.crop.circle.fill",
+        "laptopcomputer",
+        "desktopcomputer",
+        "network",
+        "antenna.radiowaves.left.and.right",
+        "cloud.fill",
+        "gear.circle.fill",
+        "cube.fill",
+        "square.stack.3d.up.fill"
+    ]
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                // 当前选中的图片（如果有）
+                if let image = selectedImage {
+                    Section("当前图片") {
+                        HStack {
+                            Spacer()
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 80, height: 80)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                            Spacer()
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                }
+                
+                // 内置图标
+                Section("内置图标") {
+                    LazyVGrid(columns: [
+                        GridItem(.flexible()),
+                        GridItem(.flexible()),
+                        GridItem(.flexible())
+                    ], spacing: 20) {
+                        ForEach(builtInIcons, id: \.self) { iconName in
+                            Button {
+                                selectedIcon = iconName
+                                selectedImage = nil
+                                dismiss()
+                            } label: {
+                                VStack(spacing: 6) {
+                                    Image(systemName: iconName)
+                                        .font(.system(size: 40))
+                                        .foregroundColor(selectedIcon == iconName ? .white : .blue)
+                                        .frame(width: 80, height: 80)
+                                        .background(selectedIcon == iconName ? Color.blue : Color.blue.opacity(0.1))
+                                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical)
+                    .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
+                    .listRowBackground(Color.clear)
+                }
+                
+                // 上传自定义图片
+                Section {
+                    Button {
+                        showingImagePicker = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "photo.fill")
+                            Text("从相册选择")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("选择图标")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingImagePicker) {
+            ImagePicker(image: $selectedImage)
+        }
     }
 }
 

@@ -20,63 +20,28 @@ extension DateFormatter {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: [
-        SortDescriptor<Item>(\.timestamp, order: .reverse)
-    ], animation: .default) private var items: [Item]
-    
-    @State private var showingAddCompany = false
+    @Query(
+        filter: #Predicate<Item> { _ in true },
+        sort: [.init(\Item.timestamp, order: .reverse)]
+    ) private var items: [Item]
+    @State private var showingAddSheet = false
     @State private var cardStates: [ProcessType: Int] = [
         .application: 0,
         .interview: 0,
         .written: 0
     ]
     
-    // 获取各种统计数据
     var statistics: [ProcessType: [Int]] {
-        [
-            .application: getApplicationStats(),
-            .interview: getInterviewStats(),
-            .written: getWrittenStats()
-        ]
-    }
-    
-    private func getApplicationStats() -> [Int] {
-        let total = items.filter { $0.processType == .application }.count
-        let offers = items.filter { $0.status == .offer }.count
-        let rate = total > 0 ? Int((Double(offers) / Double(total) * 100).rounded()) : 0
-        return [total, offers, rate]
-    }
-    
-    private func getInterviewStats() -> [Int] {
-        let total = items.filter { item in
-            item.stages.contains { $0.stage == InterviewStage.interview.rawValue }
-        }.count
-        
-        let passed = items.filter { item in
-            item.stages.contains { stageData in
-                stageData.stage == InterviewStage.interview.rawValue &&
-                stageData.status == StageStatus.passed.rawValue
-            }
-        }.count
-        
-        let rate = total > 0 ? Int((Double(passed) / Double(total) * 100).rounded()) : 0
-        return [total, passed, rate]
-    }
-    
-    private func getWrittenStats() -> [Int] {
-        let total = items.filter { item in
-            item.stages.contains { $0.stage == InterviewStage.written.rawValue }
-        }.count
-        
-        let passed = items.filter { item in
-            item.stages.contains { stageData in
-                stageData.stage == InterviewStage.written.rawValue &&
-                stageData.status == StageStatus.passed.rawValue
-            }
-        }.count
-        
-        let rate = total > 0 ? Int((Double(passed) / Double(total) * 100).rounded()) : 0
-        return [total, passed, rate]
+        var stats: [ProcessType: [Int]] = [:]
+        for type in [ProcessType.application, .interview, .written] {
+            let typeItems = items.filter { $0.processType == type }
+            let total = typeItems.count
+            let inProgress = typeItems.filter { $0.status != ProcessStatus.failed && $0.status != ProcessStatus.offer }.count
+            let completed = typeItems.filter { $0.status == ProcessStatus.offer }.count
+            let rate = total > 0 ? Int((Double(completed) / Double(total)) * 100) : 0
+            stats[type] = [total, inProgress, rate]
+        }
+        return stats
     }
     
     var body: some View {
@@ -147,7 +112,7 @@ struct ContentView: View {
                     HStack {
                         Spacer()
                         Button {
-                            showingAddCompany = true
+                            showingAddSheet = true
                         } label: {
                             Image(systemName: "plus")
                                 .font(.title2)
@@ -164,10 +129,10 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("面试进度")
-            .sheet(isPresented: $showingAddCompany) {
+            .sheet(isPresented: $showingAddSheet) {
                 AddCompanyView { newItem in
                     modelContext.insert(newItem)
-                    showingAddCompany = false
+                    showingAddSheet = false
                 }
             }
         }

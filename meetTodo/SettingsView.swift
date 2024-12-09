@@ -28,23 +28,13 @@ struct SettingsView: View {
                             if newValue {
                                 // 当用户开启提醒时，检查权限
                                 Task {
-                                    let hasPermission = try? await withCheckedThrowingContinuation { continuation in
-                                        Task {
-                                            let status = await NotificationManager.shared.checkAuthorizationStatus()
-                                            continuation.resume(returning: status)
-                                        }
-                                    }
+                                    let hasPermission = await NotificationManager.shared.checkAuthorizationStatus()
                                     
-                                    if hasPermission == false {
+                                    if !hasPermission {
                                         // 如果没有权限，请求权限
-                                        let granted = try? await withCheckedThrowingContinuation { continuation in
-                                            Task {
-                                                let status = await NotificationManager.shared.requestAuthorization()
-                                                continuation.resume(returning: status)
-                                            }
-                                        }
+                                        let granted = await NotificationManager.shared.requestAuthorization()
                                         
-                                        if granted == true {
+                                        if granted {
                                             alertMessage = "通知权限已开启"
                                         } else {
                                             alertMessage = "需要在系统设置中开启通知权限"
@@ -55,7 +45,9 @@ struct SettingsView: View {
                                 }
                             } else {
                                 // 当用户关闭提醒时，移除所有待发送的通知
-                                NotificationManager.shared.removeAllNotifications()
+                                Task {
+                                    await NotificationManager.shared.removeAllNotifications()
+                                }
                             }
                         }
                     
@@ -112,14 +104,9 @@ struct SettingsView: View {
             }
             .task {
                 if enableReminder {
-                    let hasPermission = try? await withCheckedThrowingContinuation { continuation in
-                        Task {
-                            let status = await NotificationManager.shared.checkAuthorizationStatus()
-                            continuation.resume(returning: status)
-                        }
-                    }
+                    let hasPermission = await NotificationManager.shared.checkAuthorizationStatus()
                     
-                    if hasPermission == false {
+                    if !hasPermission {
                         enableReminder = false
                         alertMessage = "需要开启通知权限才能使用提醒功能"
                         showingAlert = true

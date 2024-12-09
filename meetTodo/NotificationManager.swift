@@ -63,8 +63,10 @@ class NotificationManager {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [identifier])
     }
     
-    func removeAllNotifications() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+    func removeAllNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        await center.removeAllPendingNotificationRequests()
+        await center.removeAllDeliveredNotifications()
     }
     
     func openSettings() {

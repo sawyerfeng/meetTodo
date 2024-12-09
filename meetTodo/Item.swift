@@ -60,6 +60,7 @@ final class Item {
     @Attribute(.unique) var id: String = UUID().uuidString
     var companyName: String = String()
     var companyIcon: String = String("building.2")
+    var iconData: Data?
     var processType: ProcessType = ProcessType.application
     var currentStage: String = String()
     @Attribute private var statusRaw: String = ProcessStatus.pending.rawValue
@@ -89,6 +90,7 @@ final class Item {
     
     init(companyName: String, 
          companyIcon: String = "building.2",
+         iconData: Data? = nil,
          processType: ProcessType,
          currentStage: String,
          status: ProcessStatus = .pending,
@@ -97,6 +99,7 @@ final class Item {
         self.id = UUID().uuidString
         self.companyName = companyName
         self.companyIcon = companyIcon
+        self.iconData = iconData
         self.processType = processType
         self.currentStage = currentStage
         self.statusRaw = status.rawValue

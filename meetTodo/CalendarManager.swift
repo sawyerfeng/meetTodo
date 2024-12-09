@@ -33,6 +33,9 @@ class CalendarManager {
             // 权限被拒绝，返回 false
             return false
             
+        case .fullAccess, .writeOnly:
+            return true
+            
         @unknown default:
             return false
         }

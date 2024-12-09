@@ -1,11 +1,13 @@
 import SwiftUI
 import SwiftData
 import EventKit
+import UserNotifications
 
 struct TodoView: View {
-    @Query(sort: [
-        SortDescriptor<Item>(\.timestamp, order: .reverse)
-    ]) private var items: [Item]
+    @Query(
+        filter: #Predicate<Item> { _ in true },
+        sort: [.init(\Item.timestamp, order: .reverse)]
+    ) private var items: [Item]
     @State private var showingAlert = false
     @State private var alertMessage = ""
     @State private var showingSettingsAlert = false
@@ -87,6 +89,14 @@ struct TodoView: View {
                 if enableReminder {
                     await setupAllNotifications()
                 }
+                // 清除已显示的通知
+                await UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                // 当应用回到前台时清除已显示的通知
+                Task {
+                    await UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+                }
             }
             .onChange(of: enableReminder) { _, newValue in
                 if newValue {
@@ -96,14 +106,16 @@ struct TodoView: View {
                     }
                 } else {
                     // 当关闭提醒时，移除所有通知
-                    NotificationManager.shared.removeAllNotifications()
+                    Task {
+                        await NotificationManager.shared.removeAllNotifications()
+                    }
                 }
             }
             .onChange(of: reminderMinutes) { _, _ in
                 // 当提醒时间改变时，重新设置所有通知
                 if enableReminder {
                     Task {
-                        NotificationManager.shared.removeAllNotifications()
+                        await NotificationManager.shared.removeAllNotifications()
                         await setupAllNotifications()
                     }
                 }
@@ -132,7 +144,7 @@ struct TodoView: View {
             // 首次请求权限
             if await CalendarManager.shared.requestAccess() {
                 // 获得权限后，添加日历事件
-                let (success, message) = await CalendarManager.shared.addEvent(
+                let (_, message) = await CalendarManager.shared.addEvent(
                     title: "\(item.companyName) - \(stageData.stage)",
                     startDate: stageData.date,
                     notes: stageData.note
@@ -150,7 +162,7 @@ struct TodoView: View {
             
         case .authorized:
             // 已有权限，直接添加日历事件
-            let (success, message) = await CalendarManager.shared.addEvent(
+            let (_, message) = await CalendarManager.shared.addEvent(
                 title: "\(item.companyName) - \(stageData.stage)",
                 startDate: stageData.date,
                 notes: stageData.note
@@ -167,8 +179,23 @@ struct TodoView: View {
                 showingSettingsAlert = true
             }
             
+        case .fullAccess, .writeOnly:
+            // 已有权限，直接添加日历事件
+            let (_, message) = await CalendarManager.shared.addEvent(
+                title: "\(item.companyName) - \(stageData.stage)",
+                startDate: stageData.date,
+                notes: stageData.note
+            )
+            await MainActor.run {
+                alertMessage = message
+                showingAlert = true
+            }
+            
         @unknown default:
-            break
+            await MainActor.run {
+                alertMessage = "日历权限状态未知"
+                showingAlert = true
+            }
         }
     }
     
@@ -199,8 +226,15 @@ struct TodoView: View {
                 showingSettingsAlert = true
             }
             
+        case .fullAccess, .writeOnly:
+            // 已有权限，直接同步所有事件
+            await syncAllEvents()
+            
         @unknown default:
-            break
+            await MainActor.run {
+                alertMessage = "日历权限状态未知"
+                showingAlert = true
+            }
         }
     }
     
