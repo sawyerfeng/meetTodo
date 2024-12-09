@@ -39,15 +39,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 @main
 struct meetTodoApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    let container: ModelContainer
+    let modelContainer: ModelContainer
     
     init() {
         // 禁用Metal调试工具，避免警告
         UserDefaults.standard.set(false, forKey: "MTL_DEBUG_LAYER")
         
         do {
-            let config = ModelConfiguration(isStoredInMemoryOnly: false)
-            container = try ModelContainer(for: Item.self, configurations: config)
+            modelContainer = try ModelContainer(for: Item.self)
             
             // 请求通知权限
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
@@ -68,7 +67,7 @@ struct meetTodoApp: App {
                         Label("列表", systemImage: "list.bullet")
                     }
                 
-                TodoView()
+                TodoView(modelContext: modelContainer.mainContext)
                     .tabItem {
                         Label("待办", systemImage: "checklist")
                     }
@@ -78,7 +77,7 @@ struct meetTodoApp: App {
                         Label("设置", systemImage: "gear")
                     }
             }
-            .modelContainer(container)
+            .modelContainer(modelContainer)
         }
     }
 }
