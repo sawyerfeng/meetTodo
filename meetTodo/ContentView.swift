@@ -471,7 +471,7 @@ struct ProcessTypeCard: View {
                    currentState == 1 ? "Offer" : "录用率"
         case .interview:
             return currentState == 0 ? "面试" :
-                   currentState == 1 ? "面试通过" : "面试通过率"
+                   currentState == 1 ? "面���通过" : "面试通过率"
         case .written:
             return currentState == 0 ? "笔试" :
                    currentState == 1 ? "笔试通过" : "笔试通过率"
@@ -520,15 +520,20 @@ struct AddCompanyView: View {
     @State private var companyName = ""
     @State private var companyIcon = "building.2"
     @State private var stageDate = Date()
+    @State private var companyLogo: UIImage?
+    @State private var isSearchingLogo = false
     
-    // 预设的常用公司图标
-    let commonIcons = [
-        "building.2",
-        "building.columns",
-        "globe.asia.australia",
-        "network",
-        "server.rack",
-        "cpu"
+    // 预设的行业图标
+    let industryIcons = [
+        IconCategory(name: "互联网", icon: "network"),
+        IconCategory(name: "金融", icon: "banknote"),
+        IconCategory(name: "医疗", icon: "cross.case"),
+        IconCategory(name: "教育", icon: "book"),
+        IconCategory(name: "制造", icon: "gearshape.2"),
+        IconCategory(name: "半导体", icon: "cpu"),
+        IconCategory(name: "人工智能", icon: "brain.head.profile"),
+        IconCategory(name: "游戏", icon: "gamecontroller"),
+        IconCategory(name: "通用", icon: "building.2")
     ]
     
     var body: some View {
@@ -539,25 +544,56 @@ struct AddCompanyView: View {
                     .font(.title3)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal)
-                
-                // 图标选择
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 16) {
-                        ForEach(commonIcons, id: \.self) { icon in
-                            Button {
-                                companyIcon = icon
-                            } label: {
-                                Image(systemName: icon)
-                                    .font(.title2)
-                                    .foregroundColor(icon == companyIcon ? .blue : .gray)
-                                    .frame(width: 44, height: 44)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(icon == companyIcon ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1)))
-                            }
+                    .onChange(of: companyName) { oldValue, newValue in
+                        // 当公司名称改变且不为空时，自动搜索Logo
+                        if !newValue.isEmpty {
+                            searchCompanyLogo()
+                        } else {
+                            companyLogo = nil
                         }
                     }
-                    .padding(.horizontal)
+                
+                // 图标选择区域
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("选择图标")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal)
+                    
+                    // 图标列表
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 16) {
+                            // Logo图标（如果有）
+                            if isSearchingLogo {
+                                ProgressView()
+                                    .frame(width: 44, height: 44)
+                            } else if let logo = companyLogo {
+                                Button {
+                                    companyIcon = ""  // 使用空字符串表示使用自定义Logo
+                                } label: {
+                                    Image(uiImage: logo)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: 44, height: 44)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .stroke(companyIcon.isEmpty ? Color.blue : Color.gray.opacity(0.2), lineWidth: 1)
+                                        )
+                                }
+                            }
+                            
+                            // 预设图标列表
+                            ForEach(industryIcons, id: \.icon) { category in
+                                IconButton(
+                                    icon: category.icon,
+                                    isSelected: companyIcon == category.icon,
+                                    onTap: { companyIcon = category.icon }
+                                )
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
                 }
                 
                 // 投递日期
@@ -571,8 +607,8 @@ struct AddCompanyView: View {
                     .padding(.vertical, 10)
             }
             .padding(.top, 20)
-            .presentationDetents([.height(250)]) // 设置定度
-            .presentationDragIndicator(.visible) // 显示拖动指示器
+            .presentationDetents([.height(300)]) 
+            .presentationDragIndicator(.visible)
             .navigationTitle("添加公司")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -591,6 +627,43 @@ struct AddCompanyView: View {
         }
     }
     
+    private func searchCompanyLogo() {
+        guard !companyName.isEmpty else { return }
+        
+        // 防止频繁搜索，添加延迟
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // 确保公司名称没有在延迟期间改变
+            guard !companyName.isEmpty else { return }
+            
+            isSearchingLogo = true
+            // 将公司名称转换为域名格式（简单处理）
+            let companyDomain = companyName
+                .lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "")
+            
+            // 使用Clearbit Logo API
+            let urlString = "https://logo.clearbit.com/\(companyDomain).com"
+            
+            guard let url = URL(string: urlString) else {
+                isSearchingLogo = false
+                return
+            }
+            
+            URLSession.shared.dataTask(with: url) { data, response, error in
+                DispatchQueue.main.async {
+                    isSearchingLogo = false
+                    
+                    if let data = data, let image = UIImage(data: data) {
+                        companyLogo = image
+                        // 自动选择Logo作为图标
+                        companyIcon = ""
+                    }
+                }
+            }.resume()
+        }
+    }
+    
     private func saveCompany() {
         let item = Item(
             companyName: companyName,
@@ -598,6 +671,11 @@ struct AddCompanyView: View {
             processType: .application,
             currentStage: InterviewStage.resume.rawValue
         )
+        
+        // 如果选择了Logo，保存Logo数据
+        if companyIcon.isEmpty, let logo = companyLogo {
+            item.iconData = logo.pngData()
+        }
         
         // 添加投递阶段
         let stageData = InterviewStageData(
@@ -608,6 +686,32 @@ struct AddCompanyView: View {
         
         onSave(item)
     }
+}
+
+// 图标按钮组件
+struct IconButton: View {
+    let icon: String
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundColor(isSelected ? .blue : .gray)
+                .frame(width: 44, height: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(isSelected ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
+                )
+        }
+    }
+}
+
+// 图标分类模型
+struct IconCategory {
+    let name: String
+    let icon: String
 }
 
 // 公司
@@ -763,7 +867,7 @@ struct IconPickerView: View {
                     }
                 }
             }
-            .navigationTitle("选择图��")
+            .navigationTitle("选择图标")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -784,7 +888,7 @@ struct AddStageView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("阶段名称（如：秋招、春��）", text: $stageName)
+                TextField("阶段名称（如：秋招、春招）", text: $stageName)
             }
             .navigationTitle("添加阶段")
             .navigationBarItems(
