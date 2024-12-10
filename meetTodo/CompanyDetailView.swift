@@ -316,6 +316,10 @@ struct CompanyDetailView: View {
                             onAction: { action in
                         handleStageAction(stage, action)
                     })
+                    .onTapGesture {
+                        stageForDetail = stage
+                        showingStageDetail = true
+                    }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button {
                             handleStageAction(stage, .setStatus(.failed))
@@ -371,9 +375,20 @@ struct CompanyDetailView: View {
         }
         .navigationDestination(isPresented: $showingStageDetail) {
             if let stage = stageForDetail {
-                StageDetailView(item: stage, availableStages: availableStages) { action in
-                    handleStageAction(stage, action)
-                }
+                StageDetailView(
+                    item: stage,
+                    availableStages: getAvailableStagesForEdit(stage.stage),
+                    onAction: { action in
+                        handleStageAction(stage, action)
+                        try? modelContext.save()
+                        loadStages()
+                        if case .delete = action {
+                            showingStageDetail = false
+                        }
+                    }
+                )
+                .navigationBarBackButtonHidden(false)
+                .interactiveDismissDisabled()
             }
         }
         .sheet(isPresented: $showingStageSelector) {
@@ -404,7 +419,7 @@ struct CompanyDetailView: View {
         .onChange(of: selectedIcon) { _, newIcon in
             if newIcon != item.companyIcon {
                 item.companyIcon = newIcon
-                item.iconData = nil  // 清空自定义图片数据
+                item.iconData = nil  // 清空自定义���片数据
                 selectedImage = nil  // 清空选中的图片
                 try? modelContext.save()
             }
@@ -412,39 +427,47 @@ struct CompanyDetailView: View {
         .alert("不要灰心", isPresented: $showingFailureAlert) {
             Button("继续加油", role: .cancel) { }
         } message: {
-            Text("失败是成功之母，继续努力！")
+            Text("失败是成功之母，继续努力")
         }
         .onAppear {
             // 加载保存的阶段数据
-            stages = item.stages.map { stageData in
-                InterviewStageItem(
-                    id: UUID(uuidString: stageData.id) ?? UUID(),
-                    stage: InterviewStage(rawValue: stageData.stage) ?? .resume,
-                    interviewRound: stageData.interviewRound,
-                    date: stageData.date,
-                    note: stageData.note,
-                    status: StageStatus(rawValue: stageData.status) ?? .pending,
-                    location: stageData.location
-                )
-            }
+            loadStages()
         }
         .onChange(of: stages) { _, newStages in
             // 保存阶段数据到 Item
-            item.stages = newStages.map { stage in
-                InterviewStageData(
-                    id: stage.id.uuidString,
-                    stage: stage.stage.rawValue,
-                    interviewRound: stage.interviewRound,
-                    date: stage.date,
-                    note: stage.note,
-                    status: stage.status.rawValue,
-                    location: stage.location
-                )
-            }
-            
-            // 更新 Item 的当前阶段和状态
-            updateItemStatus()
+            saveStages(newStages)
         }
+    }
+    
+    private func loadStages() {
+        stages = item.stages.map { stageData in
+            InterviewStageItem(
+                id: UUID(uuidString: stageData.id) ?? UUID(),
+                stage: InterviewStage(rawValue: stageData.stage) ?? .resume,
+                interviewRound: stageData.interviewRound,
+                date: stageData.date,
+                note: stageData.note,
+                status: StageStatus(rawValue: stageData.status) ?? .pending,
+                location: stageData.location
+            )
+        }
+    }
+    
+    private func saveStages(_ newStages: [InterviewStageItem]) {
+        item.stages = newStages.map { stage in
+            InterviewStageData(
+                id: stage.id.uuidString,
+                stage: stage.stage.rawValue,
+                interviewRound: stage.interviewRound,
+                date: stage.date,
+                note: stage.note,
+                status: stage.status.rawValue,
+                location: stage.location
+            )
+        }
+        updateItemStatus()
+        try? modelContext.save()
+        loadStages() // 重新加载数据以确保视图更新
     }
     
     private func handleStageAction(_ stage: InterviewStageItem, _ action: StageRowAction) {
@@ -464,7 +487,8 @@ struct CompanyDetailView: View {
                 if newStatus == .failed {
                     showingFailureAlert = true
                 }
-                updateItemStatus()
+                
+                saveStages(stages)
                 
                 // 如果标记为已完成或失败，移除通知
                 if newStatus != .pending {
@@ -510,7 +534,8 @@ struct CompanyDetailView: View {
                 } else {
                     stages[index].interviewRound = nil
                 }
-                updateItemStatus()
+                
+                saveStages(stages)
                 
                 // 如果新阶段要提醒，设置新的通知
                 if [InterviewStage.interview, .written, .hrInterview].contains(newStage) {
@@ -548,7 +573,7 @@ struct CompanyDetailView: View {
             
             withAnimation {
                 stages.remove(at: index)
-                updateItemStatus()
+                saveStages(stages)
             }
         }
     }
@@ -562,7 +587,7 @@ struct CompanyDetailView: View {
             return
         }
         
-        // 获取最新的阶段（按照阶段顺序和面试轮次排序）
+        // 获取最新的阶段（按��阶段顺序和面试轮次排序）
         let sortedStages = stages.sorted { stage1, stage2 in
             let stageOrder: [InterviewStage] = [.resume, .written, .interview, .hrInterview, .offer]
             let index1 = stageOrder.firstIndex(of: stage1.stage) ?? 0
@@ -639,7 +664,7 @@ struct CompanyDetailView: View {
         // 获取新阶段的索引
         let newStageIndex = stageOrder.firstIndex(of: stage) ?? 0
         
-        // 自动将之前的所有阶段标记为通过
+        // 自动将前的所有段标记为通过
         for existingStage in stages {
             if let existingIndex = stageOrder.firstIndex(of: existingStage.stage),
                existingIndex < newStageIndex {
@@ -935,7 +960,7 @@ struct StageSelectorView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 List {
-                    // 阶段择
+                    // 阶段
                     Section {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
@@ -1095,7 +1120,7 @@ struct NoteEditorView: View {
     }
 }
 
-// ���改地点选择组件
+// 修改地点选择组件
 struct LocationSelectionView: View {
     let stage: InterviewStage
     @Binding var locationType: LocationType
@@ -1254,7 +1279,7 @@ struct StageEditorView: View {
                                 Image(systemName: locationType == .online ? "link" : "mappin.and.ellipse")
                                     .foregroundColor(.blue)
                                 TextField(locationType == .online ? 
-                                         (selectedStage == .written ? "笔试链接" : "会议链接") :
+                                         (selectedStage == .written ? "笔试链接" : "会议链��") :
                                          (selectedStage == .written ? "笔试地点" : "面试地点"),
                                          text: $address)
                             }
@@ -1333,191 +1358,6 @@ struct StageEditorView: View {
         }
         .presentationDetents([.height(UIScreen.main.bounds.height * 0.7)])
         .presentationDragIndicator(.visible)
-    }
-}
-
-struct StageDetailView: View {
-    let item: InterviewStageItem
-    let availableStages: [InterviewStage]
-    let onAction: (StageRowAction) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
-    @State private var showingEditor = false
-    @State private var showingMapActionSheet = false
-    
-    var formattedDate: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年MM月dd日 HH:mm"
-        return formatter.string(from: item.date)
-    }
-    
-    var body: some View {
-        List {
-            // 阶段信息
-            Section {
-                HStack(spacing: 16) {
-                    Circle()
-                        .fill(item.stage.color)
-                        .frame(width: 60, height: 60)
-                        .overlay {
-                            Image(systemName: item.stage.icon)
-                                .foregroundColor(.white)
-                                .font(.title2)
-                        }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.displayName)
-                            .font(.title2.bold())
-                        Text(formattedDate)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .listRowInsets(EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
-            }
-            
-            // 地点信息（如果有）
-            if let location = item.location {
-                Section {
-                    HStack {
-                        Image(systemName: location.type == .online ? "link" : "mappin.and.ellipse")
-                            .foregroundColor(.blue)
-                        Text(location.type == .online ? "在线" : "线下")
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        if location.type == .offline {
-                            Button {
-                                showingMapActionSheet = true
-                            } label: {
-                                Image(systemName: "map")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                    }
-                    
-                    if !location.address.isEmpty {
-                        if location.type == .online {
-                            Button {
-                                if let url = URL(string: location.address) {
-                                    UIApplication.shared.open(url)
-                                }
-                            } label: {
-                                Text(location.address)
-                                    .foregroundColor(.blue)
-                            }
-                        } else {
-                            Text(location.address)
-                        }
-                    }
-                }
-            }
-            
-            // 笔记（如果有）
-            if !item.note.isEmpty {
-                Section("笔记") {
-                    Text(item.note)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    Button {
-                        showingEditor = true
-                    } label: {
-                        Label("编辑", systemImage: "pencil")
-                    }
-                    
-                    Button {
-                        onAction(.setStatus(.passed))
-                        dismiss()
-                    } label: {
-                        Label("标记为通过", systemImage: "checkmark.circle")
-                    }
-                    
-                    Button {
-                        onAction(.setStatus(.failed))
-                        dismiss()
-                    } label: {
-                        Label("标记为未通过", systemImage: "xmark.circle")
-                    }
-                    
-                    Button(role: .destructive) {
-                        onAction(.delete)
-                        dismiss()
-                    } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
-        }
-        .sheet(isPresented: $showingEditor) {
-            StageEditorView(
-                stage: item,
-                availableStages: availableStages,
-                onSave: { newStage, newDate, location in
-                    onAction(.update(newStage, newDate, location))
-                    dismiss()
-                },
-                onDelete: {
-                    onAction(.delete)
-                    dismiss()
-                },
-                onSetStatus: { status in
-                    onAction(.setStatus(status))
-                    dismiss()
-                }
-            )
-        }
-        .confirmationDialog("选择地图应用", isPresented: $showingMapActionSheet) {
-            if let location = item.location {
-                Button("在高德地图中打开") {
-                    openInAmap(address: location.address)
-                }
-                Button("在���地图中打开") {
-                    openInAppleMaps(address: location.address)
-                }
-                Button("取消", role: .cancel) { }
-            }
-        }
-    }
-    
-    private func openInAmap(address: String) {
-        let encodedAddress = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        
-        // 尝试使用新版URL Scheme
-        let urlString = "amap://poi?sourceApplication=meetTodo&keywords=\(encodedAddress)"
-        let backupUrlString = "iosamap://path?sourceApplication=meetTodo&dname=\(encodedAddress)&dev=0&t=0"
-        
-        if let url = URL(string: urlString) {
-            UIApplication.shared.open(url) { success in
-                if !success, let backupUrl = URL(string: backupUrlString) {
-                    UIApplication.shared.open(backupUrl) { success in
-                        if !success {
-                            // 如果都无法打开，跳转到App Store
-                            if let appStoreURL = URL(string: "https://apps.apple.com/cn/app/id461703208") {
-                                UIApplication.shared.open(appStoreURL)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    private func openInAppleMaps(address: String) {
-        let encodedAddress = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let urlString = "http://maps.apple.com/?q=\(encodedAddress)"
-        if let url = URL(string: urlString) {
-            UIApplication.shared.open(url)
-        }
     }
 }
 
