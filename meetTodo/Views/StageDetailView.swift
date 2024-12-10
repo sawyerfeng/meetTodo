@@ -10,6 +10,7 @@ struct StageDetailView: View {
     @State private var showingMapActionSheet = false
     @State private var showingEditor = false
     @State private var showingDeleteAlert = false
+    @State private var showingLinkActionSheet = false
     
     var formattedDate: String {
         let formatter = DateFormatter()
@@ -32,7 +33,7 @@ struct StageDetailView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
-                .background(Color(.systemGray6))
+                .background(item.stage.color.opacity(0.1))
                 .cornerRadius(10)
                 
                 // 地址/链接模块
@@ -61,7 +62,7 @@ struct StageDetailView: View {
                                 }
                             } else {
                                 Button(action: {
-                                    openURL(urlString: location.address)
+                                    showingLinkActionSheet = true
                                 }) {
                                     Image(systemName: "arrow.up.forward.app.fill")
                                         .foregroundColor(.blue)
@@ -164,6 +165,14 @@ struct StageDetailView: View {
                 Button("取消", role: .cancel) { }
             }
         }
+        .confirmationDialog("选择打开方式", isPresented: $showingLinkActionSheet) {
+            if let location = item.location {
+                Button("在浏览器中打开") {
+                    openInBrowser(urlString: location.address)
+                }
+                Button("取消", role: .cancel) { }
+            }
+        }
         .alert("确认删除", isPresented: $showingDeleteAlert) {
             Button("删除", role: .destructive) {
                 onAction(.delete)
@@ -216,6 +225,22 @@ struct StageDetailView: View {
     private func openURL(urlString: String) {
         guard let url = URL(string: urlString) else { return }
         UIApplication.shared.open(url)
+    }
+    
+    // 在浏览器中打开链接
+    private func openInBrowser(urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        UIApplication.shared.open(url, options: [.universalLinksOnly: false]) { success in
+            if !success {
+                // 如果���法打开，尝试添加 https:// 前缀
+                if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
+                    let httpsUrl = "https://" + urlString
+                    if let secureUrl = URL(string: httpsUrl) {
+                        UIApplication.shared.open(secureUrl)
+                    }
+                }
+            }
+        }
     }
 }
 

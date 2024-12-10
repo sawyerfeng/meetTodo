@@ -375,7 +375,7 @@ struct CompanyDetailView: View {
         }
         .navigationDestination(isPresented: $showingStageDetail) {
             if let stage = stageForDetail {
-                StageDetailView(
+                 StageDetailView(
                     item: stage,
                     availableStages: getAvailableStagesForEdit(stage.stage),
                     onAction: { action in
@@ -419,7 +419,7 @@ struct CompanyDetailView: View {
         .onChange(of: selectedIcon) { _, newIcon in
             if newIcon != item.companyIcon {
                 item.companyIcon = newIcon
-                item.iconData = nil  // 清空自定义���片数据
+                item.iconData = nil  // 清空自定义图片数据
                 selectedImage = nil  // 清空选中的图片
                 try? modelContext.save()
             }
@@ -587,7 +587,7 @@ struct CompanyDetailView: View {
             return
         }
         
-        // 获取最新的阶段（按��阶段顺序和面试轮次排序）
+        // 获取最新的阶段（按照阶段顺序和面试轮次排序）
         let sortedStages = stages.sorted { stage1, stage2 in
             let stageOrder: [InterviewStage] = [.resume, .written, .interview, .hrInterview, .offer]
             let index1 = stageOrder.firstIndex(of: stage1.stage) ?? 0
@@ -842,26 +842,22 @@ struct StageRow: View {
                     .font(.subheadline)
                     .foregroundColor(.blue)
                 
-                if !item.note.isEmpty {
-                    Text(item.note)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                
-                // 位置信息
-                if let location = item.location {
-                    Button {
-                        showingMapActionSheet = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "mappin.circle.fill")
-                                .foregroundColor(.red)
-                            Text(location.address)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
+                // 预览气泡
+                HStack(spacing: 8) {
+                    if let location = item.location {
+                        PreviewBubble(
+                            icon: location.type == .online ? "link" : "mappin",
+                            text: location.type.rawValue,
+                            color: .blue
+                        )
+                    }
+                    
+                    if !item.note.isEmpty {
+                        PreviewBubble(
+                            icon: "note.text",
+                            text: "笔记",
+                            color: .orange
+                        )
                     }
                 }
             }
@@ -1279,7 +1275,7 @@ struct StageEditorView: View {
                                 Image(systemName: locationType == .online ? "link" : "mappin.and.ellipse")
                                     .foregroundColor(.blue)
                                 TextField(locationType == .online ? 
-                                         (selectedStage == .written ? "笔试链接" : "会议链��") :
+                                         (selectedStage == .written ? "笔试链接" : "会议链接") :
                                          (selectedStage == .written ? "笔试地点" : "面试地点"),
                                          text: $address)
                             }
@@ -1492,6 +1488,27 @@ struct CompanyIconPicker: View {
         .sheet(isPresented: $showingImagePicker) {
             ImagePicker(image: $selectedImage)
         }
+    }
+}
+
+// 添加 PreviewBubble 视图
+struct PreviewBubble: View {
+    let icon: String
+    let text: String
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption)
+            Text(text)
+                .font(.caption)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.1))
+        .foregroundColor(color)
+        .clipShape(Capsule())
     }
 }
 
