@@ -24,17 +24,77 @@ struct ContentView: View {
         filter: #Predicate<Item> { _ in true },
         sort: [.init(\Item.timestamp, order: .reverse)]
     ) private var items: [Item]
+    @Query private var stages: [RecruitmentStage]
     @State private var showingAddSheet = false
+    @State private var showingStageSheet = false
+    @State private var editingStage: RecruitmentStage?
+    @State private var showingDeleteAlert = false
+    @State private var stageToDelete: RecruitmentStage?
+    @State private var showingAddStageInput = false
+    @State private var newStageName = ""
+    @State private var editingText = ""
+    @State private var showingError = false
+    @State private var errorMessage = ""
     @State private var cardStates: [ProcessType: Int] = [
         .application: 0,
         .interview: 0,
         .written: 0
     ]
     
+    private func addNewStage() {
+        let trimmedName = newStageName.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 检查名称长度
+        if trimmedName.count > 10 {
+            errorMessage = "阶段名称不能超过10个字"
+            withAnimation {
+                showingError = true
+            }
+            return
+        }
+        
+        // 检查是否为空
+        if trimmedName.isEmpty {
+            errorMessage = "请输入阶段名称"
+            withAnimation {
+                showingError = true
+            }
+            return
+        }
+        
+        // 检查重名
+        if stages.contains(where: { $0.name == trimmedName }) {
+            errorMessage = "已存在相同名称的阶段"
+            withAnimation {
+                showingError = true
+            }
+            return
+        }
+        
+        let newStage = RecruitmentStage(name: trimmedName, isSelected: false)
+        modelContext.insert(newStage)
+        newStageName = ""
+        showingError = false
+        withAnimation {
+            showingAddStageInput = false
+        }
+    }
+    
+    var filteredItems: [Item] {
+        if let selectedStage = stages.first(where: { $0.isSelected }) {
+            return items.filter { $0.recruitmentStage?.id == selectedStage.id }
+        }
+        return items
+    }
+    
+    var currentStageName: String {
+        stages.first(where: { $0.isSelected })?.name ?? "选择阶段"
+    }
+    
     var statistics: [ProcessType: [Int]] {
         var stats: [ProcessType: [Int]] = [:]
         for type in [ProcessType.application, .interview, .written] {
-            let typeItems = items.filter { $0.processType == type }
+            let typeItems = filteredItems.filter { $0.processType == type }
             let total = typeItems.count
             let inProgress = typeItems.filter { $0.status != ProcessStatus.failed && $0.status != ProcessStatus.offer }.count
             let completed = typeItems.filter { $0.status == ProcessStatus.offer }.count
@@ -48,6 +108,151 @@ struct ContentView: View {
         NavigationStack {
             ZStack {
                 VStack(spacing: 16) {
+                    // 阶段选择器按钮
+                    HStack {
+                        Spacer()
+                        Button {
+                            showingStageSheet = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(currentStageName)
+                                    .font(.headline)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.bold())
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.1))
+                            .foregroundColor(.blue)
+                            .cornerRadius(16)
+                        }
+                        .sheet(isPresented: $showingStageSheet) {
+                            NavigationStack {
+                                VStack(spacing: 0) {
+                                    if showingAddStageInput {
+                                        VStack(spacing: 8) {
+                                            HStack {
+                                                TextField("输入新阶段名称", text: $newStageName)
+                                                    .textFieldStyle(.roundedBorder)
+                                                    .submitLabel(.done)
+                                                    .onSubmit(addNewStage)
+                                                
+                                                Button(action: addNewStage) {
+                                                    Image(systemName: "plus.circle.fill")
+                                                        .font(.title2)
+                                                        .foregroundColor(.blue)
+                                                }
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.top)
+                                            
+                                            if showingError {
+                                                Text(errorMessage)
+                                                    .foregroundColor(.red)
+                                                    .font(.caption)
+                                            }
+                                        }
+                                        .transition(.move(edge: .top).combined(with: .opacity))
+                                        
+                                        Divider()
+                                            .padding(.vertical)
+                                    }
+                                    
+                                    List {
+                                        ForEach(stages) { stage in
+                                            HStack {
+                                                if editingStage?.id == stage.id {
+                                                    TextField("阶段名称", text: $editingText)
+                                                        .textFieldStyle(.roundedBorder)
+                                                        .submitLabel(.done)
+                                                        .onSubmit {
+                                                            let trimmedName = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                            if !trimmedName.isEmpty && trimmedName.count <= 10 &&
+                                                                !stages.contains(where: { $0.id != stage.id && $0.name == trimmedName }) {
+                                                                stage.name = trimmedName
+                                                                editingStage = nil
+                                                                editingText = ""
+                                                            }
+                                                        }
+                                                    
+                                                    Button {
+                                                        editingStage = nil
+                                                        editingText = ""
+                                                    } label: {
+                                                        Text("完成")
+                                                            .foregroundColor(.blue)
+                                                    }
+                                                } else {
+                                                    Button {
+                                                        selectStage(stage)
+                                                        showingStageSheet = false
+                                                    } label: {
+                                                        HStack {
+                                                            Image(systemName: stage.isSelected ? "checkmark.circle.fill" : "circle")
+                                                                .foregroundColor(stage.isSelected ? .blue : .gray)
+                                                            Text(stage.name)
+                                                                .foregroundColor(.primary)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            .swipeActions(edge: .trailing) {
+                                                if stages.count > 1 {
+                                                    Button(role: .destructive) {
+                                                        stageToDelete = stage
+                                                        showingDeleteAlert = true
+                                                    } label: {
+                                                        Label("删除", systemImage: "trash")
+                                                    }
+                                                    
+                                                    Button {
+                                                        editingStage = stage
+                                                        editingText = stage.name
+                                                    } label: {
+                                                        Label("编辑", systemImage: "pencil")
+                                                    }
+                                                    .tint(.orange)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                .navigationTitle("管理阶段")
+                                .navigationBarTitleDisplayMode(.inline)
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarTrailing) {
+                                        Button {
+                                            withAnimation {
+                                                showingAddStageInput.toggle()
+                                                if !showingAddStageInput {
+                                                    newStageName = ""
+                                                    showingError = false
+                                                }
+                                            }
+                                        } label: {
+                                            Text(showingAddStageInput ? "完成" : "添加")
+                                        }
+                                    }
+                                }
+                                .alert("确认删除", isPresented: $showingDeleteAlert) {
+                                    Button("取消", role: .cancel) {}
+                                    Button("删除", role: .destructive) {
+                                        if let stage = stageToDelete {
+                                            deleteStage(stage)
+                                        }
+                                    }
+                                } message: {
+                                    if let stage = stageToDelete {
+                                        Text("确定要删除「\(stage.name)」阶段吗？该阶段下的所有公司也会被删除。")
+                                    }
+                                }
+                            }
+                            .presentationDetents([.height(400)])
+                            .presentationDragIndicator(.visible)
+                        }
+                        .padding(.trailing)
+                    }
+                    
                     // 看板
                     HStack(spacing: 12) {
                         ProcessTypeCard(type: .application,
@@ -76,7 +281,7 @@ struct ContentView: View {
                     
                     // 公司列表
                     List {
-                        ForEach(items) { item in
+                        ForEach(filteredItems) { item in
                             NavigationLink {
                                 CompanyDetailView(item: item)
                             } label: {
@@ -131,15 +336,41 @@ struct ContentView: View {
             .navigationTitle("面试进度")
             .sheet(isPresented: $showingAddSheet) {
                 AddCompanyView { newItem in
+                    if let selectedStage = stages.first(where: { $0.isSelected }) {
+                        newItem.recruitmentStage = selectedStage
+                    }
                     modelContext.insert(newItem)
                     showingAddSheet = false
                 }
             }
         }
         .task {
-            // 预加载数据
-            _ = items.count
+            if stages.isEmpty {
+                RecruitmentStage.createDefaultStage(context: modelContext)
+            }
         }
+    }
+    
+    private func selectStage(_ selectedStage: RecruitmentStage) {
+        for stage in stages {
+            stage.isSelected = (stage.id == selectedStage.id)
+        }
+    }
+    
+    private func deleteStage(_ stage: RecruitmentStage) {
+        if stages.count <= 1 { return }
+        
+        // 如果删除的是当前选中的阶段，选中另一个阶段
+        if stage.isSelected, let newSelectedStage = stages.first(where: { $0.id != stage.id }) {
+            newSelectedStage.isSelected = true
+        }
+        
+        // 删除关联的公司
+        items.filter { $0.recruitmentStage?.id == stage.id }.forEach { item in
+            modelContext.delete(item)
+        }
+        
+        modelContext.delete(stage)
     }
 }
 
@@ -258,7 +489,7 @@ struct AddCompanyView: View {
                     .padding(.vertical, 10)
             }
             .padding(.top, 20)
-            .presentationDetents([.height(250)]) // 设置固定高度
+            .presentationDetents([.height(250)]) // 设置定度
             .presentationDragIndicator(.visible) // 显示拖动指示器
             .navigationTitle("添加公司")
             .navigationBarTitleDisplayMode(.inline)
@@ -297,7 +528,7 @@ struct AddCompanyView: View {
     }
 }
 
-// 公司行
+// 公司
 struct CompanyRow: View {
     let item: Item
     
@@ -380,7 +611,7 @@ struct CompanyRow: View {
     }
 }
 
-// 图标选择器视图
+// 图标选择视图
 struct IconPickerView: View {
     @Binding var selectedIcon: String
     let icons: [String]
@@ -417,6 +648,134 @@ struct IconPickerView: View {
                 }
             }
         }
+    }
+}
+
+struct AddStageView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @State private var stageName = ""
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("阶段名称（如：秋招、春招）", text: $stageName)
+            }
+            .navigationTitle("添加阶段")
+            .navigationBarItems(
+                leading: Button("取消") {
+                    dismiss()
+                },
+                trailing: Button("添加") {
+                    let newStage = RecruitmentStage(name: stageName, isSelected: false)
+                    modelContext.insert(newStage)
+                    dismiss()
+                }
+                .disabled(stageName.isEmpty)
+            )
+        }
+    }
+}
+
+struct EditStageView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var stage: RecruitmentStage
+    @State private var stageName: String
+    
+    init(stage: RecruitmentStage) {
+        self.stage = stage
+        self._stageName = State(initialValue: stage.name)
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("阶段名称", text: $stageName)
+            }
+            .navigationTitle("编辑阶段")
+            .navigationBarItems(
+                leading: Button("取消") {
+                    dismiss()
+                },
+                trailing: Button("保存") {
+                    stage.name = stageName
+                    dismiss()
+                }
+                .disabled(stageName.isEmpty)
+            )
+        }
+    }
+}
+
+struct StageOptionsMenu: View {
+    let stages: [RecruitmentStage]
+    let onStageSelect: (RecruitmentStage) -> Void
+    let onStageEdit: (RecruitmentStage) -> Void
+    let onStageDelete: (RecruitmentStage) -> Void
+    let onAddNew: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            ForEach(stages) { stage in
+                HStack {
+                    Button {
+                        onStageSelect(stage)
+                    } label: {
+                        HStack {
+                            Text(stage.name)
+                                .foregroundColor(stage.isSelected ? .blue : .primary)
+                            Spacer()
+                            if stage.isSelected {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                                    .font(.caption)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    
+                    if stages.count > 1 {
+                        Menu {
+                            Button {
+                                onStageEdit(stage)
+                            } label: {
+                                Label("编辑", systemImage: "pencil")
+                            }
+                            
+                            Button(role: .destructive) {
+                                onStageDelete(stage)
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            
+            Divider()
+                .padding(.horizontal, 8)
+            
+            Button {
+                onAddNew()
+            } label: {
+                HStack {
+                    Text("添加新阶段")
+                    Image(systemName: "plus")
+                        .font(.caption)
+                }
+                .foregroundColor(.blue)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .padding(.vertical, 4)
+        .frame(width: 180)
     }
 }
 

@@ -67,6 +67,7 @@ final class Item {
     var nextStageDate: Date? = Optional<Date>.none
     var timestamp: Date = Date()
     @Attribute private var pinStatusRaw: Int = 0
+    var recruitmentStage: RecruitmentStage?
     
     @Attribute var stages: [InterviewStageData] = []
     
