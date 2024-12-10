@@ -1,16 +1,25 @@
 import EventKit
 import UIKit
 
-class CalendarManager {
-    static let shared = CalendarManager()
+protocol CalendarService {
+    func requestAccess() async throws -> Bool
+    func addEvent(title: String, startDate: Date, location: String?) async throws -> String
+    func removeEvent(eventIdentifier: String) async throws
+    func updateEvent(eventIdentifier: String, title: String, startDate: Date, location: String?) async throws
+    func checkAuthorizationStatus() -> EKAuthorizationStatus
+    func openSettings()
+}
+
+class DefaultCalendarService: CalendarService {
+    static let shared = DefaultCalendarService()
     private let eventStore = EKEventStore()
+    private init() {}
     
     func checkAuthorizationStatus() -> EKAuthorizationStatus {
         return EKEventStore.authorizationStatus(for: .event)
     }
     
-    func requestAccess() async -> Bool {
-        // 先检查当前权限状态
+    func requestAccess() async throws -> Bool {
         let status = checkAuthorizationStatus()
         
         switch status {
@@ -18,7 +27,6 @@ class CalendarManager {
             return true
             
         case .notDetermined:
-            // 首次请求权限
             if #available(iOS 17.0, *) {
                 return (try? await eventStore.requestFullAccessToEvents()) ?? false
             } else {
@@ -30,7 +38,6 @@ class CalendarManager {
             }
             
         case .denied, .restricted:
-            // 权限被拒绝，返回 false
             return false
             
         case .fullAccess, .writeOnly:
@@ -49,63 +56,90 @@ class CalendarManager {
     }
     
     private func hasExistingEvent(title: String, startDate: Date, endDate: Date) -> Bool {
-        // 创建时间范围（以开始时间为中心，前后各1小时）
         let searchStart = Calendar.current.date(byAdding: .hour, value: -1, to: startDate)!
         let searchEnd = Calendar.current.date(byAdding: .hour, value: 1, to: startDate)!
         
-        // 创建谓词来查找事件
         let predicate = eventStore.predicateForEvents(withStart: searchStart,
                                                     end: searchEnd,
                                                     calendars: nil)
         
-        // 获取该时间范围内的所有事件
         let existingEvents = eventStore.events(matching: predicate)
         
-        // 检查是否有相同标题且时间完全重叠的事件
         return existingEvents.contains { event in
             event.title == title &&
-            abs(event.startDate.timeIntervalSince(startDate)) < 60 && // 开始时间相差不超过1分钟
-            abs(event.endDate.timeIntervalSince(endDate)) < 60 // 结束时间相差不超过1分钟
+            abs(event.startDate.timeIntervalSince(startDate)) < 60 &&
+            abs(event.endDate.timeIntervalSince(endDate)) < 60
         }
     }
     
-    func addEvent(title: String, startDate: Date, notes: String?) async -> (Bool, String) {
+    func addEvent(title: String, startDate: Date, location: String?) async throws -> String {
         let status = checkAuthorizationStatus()
         
-        // 如果权限被拒绝，返回错误信息
         guard status != .denied && status != .restricted else {
-            return (false, "需要日历权限才能添加提醒，是否前往设置？")
+            throw CalendarError.permissionDenied
         }
         
-        // 请求权限
-        guard await requestAccess() else {
-            return (false, "获取日历权限失败")
+        guard try await requestAccess() else {
+            throw CalendarError.permissionDenied
         }
         
-        // 计算结束时间（开始时间后1小时）
         let endDate = Calendar.current.date(byAdding: .hour, value: 1, to: startDate)!
         
-        // 检查是否已存在相同的事件
         if hasExistingEvent(title: title, startDate: startDate, endDate: endDate) {
-            return (false, "该时间段已存在相同的面试安排")
+            throw CalendarError.eventExists
         }
         
         let event = EKEvent(eventStore: eventStore)
         event.title = title
         event.startDate = startDate
         event.endDate = endDate
-        event.notes = notes
+        event.location = location
         event.calendar = eventStore.defaultCalendarForNewEvents
-        
-        // 添加提醒
-        event.addAlarm(EKAlarm(relativeOffset: -3600)) // 1小时前提醒
+        event.addAlarm(EKAlarm(relativeOffset: -3600))
         
         do {
             try eventStore.save(event, span: .thisEvent)
-            return (true, "已添加到系统日历")
+            return event.eventIdentifier
         } catch {
-            print("保存事件失败: \(error)")
-            return (false, "添加失败：\(error.localizedDescription)")
+            throw CalendarError.saveFailed(error)
         }
     }
+    
+    func removeEvent(eventIdentifier: String) async throws {
+        guard let event = eventStore.event(withIdentifier: eventIdentifier) else {
+            throw CalendarError.eventNotFound
+        }
+        
+        do {
+            try eventStore.remove(event, span: .thisEvent)
+        } catch {
+            throw CalendarError.deleteFailed(error)
+        }
+    }
+    
+    func updateEvent(eventIdentifier: String, title: String, startDate: Date, location: String?) async throws {
+        guard let event = eventStore.event(withIdentifier: eventIdentifier) else {
+            throw CalendarError.eventNotFound
+        }
+        
+        event.title = title
+        event.startDate = startDate
+        event.endDate = Calendar.current.date(byAdding: .hour, value: 1, to: startDate)!
+        event.location = location
+        
+        do {
+            try eventStore.save(event, span: .thisEvent)
+        } catch {
+            throw CalendarError.updateFailed(error)
+        }
+    }
+}
+
+enum CalendarError: Error {
+    case permissionDenied
+    case eventExists
+    case eventNotFound
+    case saveFailed(Error)
+    case updateFailed(Error)
+    case deleteFailed(Error)
 } 

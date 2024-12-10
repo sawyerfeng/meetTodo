@@ -14,7 +14,7 @@ struct StageLocation: Codable, Equatable {
     }
 }
 
-struct InterviewStageData: Codable {
+struct InterviewStageData: Codable, Identifiable, Equatable {
     let id: String
     var stage: String
     var interviewRound: Int?
@@ -37,5 +37,15 @@ struct InterviewStageData: Codable {
         self.note = note
         self.status = status
         self.location = location
+    }
+    
+    static func == (lhs: InterviewStageData, rhs: InterviewStageData) -> Bool {
+        return lhs.id == rhs.id &&
+            lhs.stage == rhs.stage &&
+            lhs.interviewRound == rhs.interviewRound &&
+            lhs.date == rhs.date &&
+            lhs.note == rhs.note &&
+            lhs.status == rhs.status &&
+            lhs.location == rhs.location
     }
 } 

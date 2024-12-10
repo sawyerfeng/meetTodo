@@ -1,15 +1,26 @@
 import UserNotifications
 import SwiftUI
 
-class NotificationManager {
-    static let shared = NotificationManager()
+protocol NotificationService {
+    func scheduleNotification(for item: Item, stageData: InterviewStageData, minutesBefore: Int) async
+    func removeNotification(for item: Item, stageData: InterviewStageData)
+    func requestAuthorization() async throws -> Bool
+    func checkAuthorizationStatus() async -> Bool
+    func removeAllNotifications() async
+    func openSettings()
+    func checkPendingNotifications() async
+}
+
+class DefaultNotificationService: NotificationService {
+    static let shared = DefaultNotificationService()
+    private init() {}
     
     func checkAuthorizationStatus() async -> Bool {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         return settings.authorizationStatus == .authorized
     }
     
-    func requestAuthorization() async -> Bool {
+    func requestAuthorization() async throws -> Bool {
         do {
             return try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
         } catch {
@@ -76,7 +87,6 @@ class NotificationManager {
         }
     }
     
-    // 检查所有待发送的通知
     func checkPendingNotifications() async {
         let requests = await UNUserNotificationCenter.current().pendingNotificationRequests()
         print("当前待发送的通知数量：\(requests.count)")
