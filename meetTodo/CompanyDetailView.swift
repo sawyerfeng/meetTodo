@@ -160,84 +160,132 @@ struct CompanyDetailView: View {
         }
     }
     
+    private func getStatusColor(for item: Item) -> Color {
+        // 获取最新的阶段（按照阶段顺序和面试轮次排序）
+        let sortedStages = item.stages.sorted { stage1, stage2 in
+            let stageOrder: [InterviewStage] = [.resume, .written, .interview, .hrInterview, .offer]
+            let index1 = stageOrder.firstIndex(of: InterviewStage(rawValue: stage1.stage) ?? .resume) ?? 0
+            let index2 = stageOrder.firstIndex(of: InterviewStage(rawValue: stage2.stage) ?? .resume) ?? 0
+            
+            if index1 == index2 {
+                if stage1.stage == InterviewStage.interview.rawValue {
+                    return (stage1.interviewRound ?? 0) > (stage2.interviewRound ?? 0)
+                }
+                return stage1.date > stage2.date
+            }
+            return index1 > index2
+        }
+        
+        guard let latestStage = sortedStages.first else {
+            return Color.gray.opacity(0.1) // 没有阶段时显示灰色
+        }
+        
+        // 检查是否有通过的Offer
+        if latestStage.stage == InterviewStage.offer.rawValue &&
+           latestStage.status == StageStatus.passed.rawValue {
+            return Color.green.opacity(0.1) // Offer通过显示浅绿色
+        }
+        
+        // 根据最新阶段的状态显示颜色
+        switch latestStage.status {
+        case StageStatus.failed.rawValue:
+            return Color.red.opacity(0.1)
+        case StageStatus.passed.rawValue:
+            return Color.green.opacity(0.1)
+        default:
+            return Color.blue.opacity(0.1) // 进行中显示蓝色
+        }
+    }
+    
     var body: some View {
-        ZStack {
-            List {
-                // 公司信息头部
-                VStack(spacing: 20) {
-                    // 公司图标
-                    Button {
-                        showingIconPicker = true
-                    } label: {
-                        ZStack {
-                            if let image = selectedImage {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 120, height: 120)
-                                    .clipShape(RoundedRectangle(cornerRadius: 24))
-                            } else if let iconData = item.iconData,
-                                     let uiImage = UIImage(data: iconData) {
-                                Image(uiImage: uiImage)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 120, height: 120)
-                                    .clipShape(RoundedRectangle(cornerRadius: 24))
-                            } else {
-                                RoundedRectangle(cornerRadius: 24)
-                                    .fill(Color.blue.opacity(0.1))
-                                    .frame(width: 120, height: 120)
-                                    .overlay {
-                                        Image(systemName: selectedIcon)
-                                            .font(.system(size: 50))
-                                            .foregroundColor(.blue)
-                                    }
-                            }
-                            
-                            if item.isPinned {
-                                Image(systemName: "pin.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                                    .offset(x: 45, y: -45)
-                            }
+        ZStack(alignment: .top) {
+            // 固定在顶部的公司信息卡片
+            VStack {
+                // 公司信息卡片
+                VStack(spacing: 8) {
+                    ZStack {
+                        if selectedImage != nil {
+                            Image(uiImage: selectedImage!)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 120, height: 120)
+                                .clipShape(RoundedRectangle(cornerRadius: 24))
+                        } else if let iconData = item.iconData,
+                                  let uiImage = UIImage(data: iconData) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 120, height: 120)
+                                .clipShape(RoundedRectangle(cornerRadius: 24))
+                        } else {
+                            RoundedRectangle(cornerRadius: 24)
+                                .fill(Color.blue.opacity(0.1))
+                                .frame(width: 120, height: 120)
+                                .overlay {
+                                    Image(systemName: selectedIcon)
+                                        .font(.system(size: 50))
+                                        .foregroundColor(.blue)
+                                }
                         }
+                        
+                        if item.isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                                .offset(x: 45, y: -45)
+                        }
+                    }
+                    .onTapGesture {
+                        showingIconPicker = true
                     }
                     
-                    VStack(spacing: 8) {
-                        makeTextField(item.companyName, isEditing: isEditingName, onSubmit: { newValue in
-                            if !newValue.isEmpty {
-                                item.companyName = newValue
-                                try? modelContext.save()
-                            }
-                            isEditingName = false
-                        })
-                        
-                        Text(item.currentStage)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        // 进度条
-                        GeometryReader { geometry in
-                            ZStack(alignment: .leading) {
-                                Rectangle()
-                                    .fill(Color.gray.opacity(0.1))
-                                    .frame(height: 4)
-                                    .cornerRadius(2)
-                                
-                                Rectangle()
-                                    .fill(item.status.color)
-                                    .frame(width: geometry.size.width * CGFloat(item.status.percentage) / 100, height: 4)
-                                    .cornerRadius(2)
-                            }
+                    makeTextField(item.companyName, isEditing: isEditingName) { newName in
+                        if newName != item.companyName {
+                            item.companyName = newName
+                            try? modelContext.save()
                         }
-                        .frame(height: 4)
-                        .padding(.top, 4)
+                        isEditingName = false
                     }
+                    
+                    Text(item.currentStage)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    // 进度条
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.1))
+                                .frame(height: 4)
+                                .cornerRadius(2)
+                            
+                            Rectangle()
+                                .fill(item.status.color)
+                                .frame(width: geometry.size.width * CGFloat(item.status.percentage) / 100, height: 4)
+                                .cornerRadius(2)
+                        }
+                    }
+                    .frame(height: 4)
+                    .padding(.top, 4)
                 }
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
                 .padding()
+                .background(getStatusColor(for: item))
+                .cornerRadius(16)
+                .padding()
+            }
+            .background(Color(uiColor: .systemBackground))
+            .zIndex(1)
+            
+            // 可滚动的阶段列表
+            List {
+                // 添加一个空的 Section 来为顶部卡片留出空间
+                Section {
+                    Color.clear
+                        .frame(height: 280)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                }
                 
                 // 阶段列表
                 let sortedStages = stages.sorted { stage1, stage2 in
@@ -253,33 +301,50 @@ struct CompanyDetailView: View {
                     let index2 = stageOrder.firstIndex(of: stage2.stage) ?? 0
                     
                     if index1 == index2 {
-                        // 如果是同一阶段（比如面试），按照轮次排序
                         if stage1.stage == .interview {
-                            return (stage1.interviewRound ?? 0) < (stage2.interviewRound ?? 0)
+                            return (stage1.interviewRound ?? 0) > (stage2.interviewRound ?? 0)
                         }
-                        return stage1.date < stage2.date
+                        return stage1.date > stage2.date
                     }
-                    return index1 < index2
+                    return index1 > index2
                 }
                 
                 ForEach(Array(sortedStages.enumerated()), id: \.element.id) { index, stage in
                     StageRow(item: stage,
-                            previousStage: index > 0 ? sortedStages[index - 1] : nil,
+                            previousStage: index < sortedStages.count - 1 ? sortedStages[index + 1] : nil,
                             availableStages: getAvailableStagesForEdit(stage.stage),
                             onAction: { action in
                         handleStageAction(stage, action)
                     })
-                    .listRowInsets(EdgeInsets())
-                    .padding(.horizontal)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            handleStageAction(stage, .setStatus(.failed))
+                        } label: {
+                            Label("未通过", systemImage: "xmark.circle")
+                        }
+                        .tint(.red)
+                        
+                        Button {
+                            handleStageAction(stage, .setStatus(.passed))
+                        } label: {
+                            Label("通过", systemImage: "checkmark.circle")
+                        }
+                        .tint(.green)
+                    }
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
-                    .onTapGesture {
-                        stageForDetail = stage
-                        showingStageDetail = true
-                    }
                 }
+                
+                // 添加底部空间，避免加号按钮遮挡
+                Color.clear
+                    .frame(height: 100)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
             }
             .listStyle(.plain)
+            .zIndex(0)
             
             // 浮动添加按钮
             VStack {
@@ -302,6 +367,7 @@ struct CompanyDetailView: View {
                 }
                 .padding(.bottom, 20)
             }
+            .zIndex(2)
         }
         .navigationDestination(isPresented: $showingStageDetail) {
             if let stage = stageForDetail {
@@ -327,7 +393,7 @@ struct CompanyDetailView: View {
         }
         .onChange(of: selectedImage) { _, newImage in
             if let image = newImage {
-                // 压缩图片数据
+                // 压缩图数据
                 if let imageData = image.jpegData(compressionQuality: 0.7) {
                     item.iconData = imageData
                     item.companyIcon = ""  // 清空系统图标
@@ -446,7 +512,7 @@ struct CompanyDetailView: View {
                 }
                 updateItemStatus()
                 
-                // 如果新阶段需要提醒，设置新的通知
+                // 如果新阶段要提醒，设置新的通知
                 if [InterviewStage.interview, .written, .hrInterview].contains(newStage) {
                     Task {
                         let updatedStage = stages[index]
@@ -692,17 +758,15 @@ struct StageRow: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            // 连接线
-            if let _ = previousStage {
-                Rectangle()
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(width: 2, height: 20)
-                    .padding(.vertical, 4)
-            }
-            
-            // 主要内容
-            HStack(spacing: 12) {
+        HStack(spacing: 0) {
+            // 左侧图标和连接线
+            VStack(spacing: 0) {
+                if previousStage != nil && item.stage != .offer {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(width: 2)
+                        .frame(maxHeight: .infinity)
+                }
                 Circle()
                     .fill(item.stage.color)
                     .frame(width: 40, height: 40)
@@ -710,85 +774,96 @@ struct StageRow: View {
                         Image(systemName: item.stage.icon)
                             .foregroundColor(.white)
                     }
-                
-                VStack(alignment: .leading, spacing: 4) {
+                if previousStage != nil && item.stage != .offer {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(width: 2)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(width: 40, height: 100)
+            .padding(.horizontal, 16)
+            
+            // 连接线
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(height: 2)
+                .frame(width: 20)
+            
+            // 右侧内容模块
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
                     Text(item.displayName)
                         .font(.headline)
                         .foregroundColor(.primary)
                     
-                    Text(formattedDateTime)
-                        .font(.subheadline)
-                        .foregroundColor(.blue)
+                    Spacer()
                     
-                    if !item.note.isEmpty {
-                        Text(item.note)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                
-                Spacer()
-                
-                // 状态图标
-                HStack(spacing: 8) {
-                    if let location = item.location {
-                        Button {
-                            showingMapActionSheet = true
-                        } label: {
-                            Image(systemName: location.type == .online ? "link" : "mappin.and.ellipse")
-                                .foregroundColor(.blue)
-                        }
-                    }
-                    
-                    if !item.note.isEmpty {
-                        Image(systemName: "note.text")
+                    // 状态图标
+                    switch item.status {
+                    case .passed:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    case .failed:
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.red)
+                    case .pending:
+                        Image(systemName: "clock.fill")
                             .foregroundColor(.blue)
                     }
                 }
-            }
-            .padding()
-            .background(item.status.color)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .confirmationDialog("选择地图应用", isPresented: $showingMapActionSheet) {
+                
+                Text(formattedDateTime)
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
+                
+                if !item.note.isEmpty {
+                    Text(item.note)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                // 位置信息
                 if let location = item.location {
-                    if location.type == .offline {
-                        Button("在高德地图中打开") {
-                            openInAmap(address: location.address)
-                        }
-                        Button("在苹果地图中打开") {
-                            openInAppleMaps(address: location.address)
-                        }
-                    } else {
-                        Button("打开链接") {
-                            if let url = URL(string: location.address) {
-                                UIApplication.shared.open(url)
-                            }
+                    Button {
+                        showingMapActionSheet = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "mappin.circle.fill")
+                                .foregroundColor(.red)
+                            Text(location.address)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
                         }
                     }
-                    Button("取消", role: .cancel) { }
                 }
             }
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) {
-                    onAction(.delete)
-                } label: {
-                    Label("删除", systemImage: "trash")
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(item.stage.color.opacity(0.1), lineWidth: 1)
+            )
+            
+            Spacer(minLength: 16)
+        }
+        .padding(.vertical, 4)
+        .confirmationDialog("选择地图应用", isPresented: $showingMapActionSheet) {
+            if let location = item.location {
+                Button("在高德地图中打开") {
+                    openInAmap(address: location.address)
                 }
-                
-                Button {
-                    onAction(.setStatus(.failed))
-                } label: {
-                    Label("未通过", systemImage: "xmark.circle")
+                Button("在苹地图中打开") {
+                    openInAppleMaps(address: location.address)
                 }
-                .tint(.orange)
-                
-                Button {
-                    onAction(.setStatus(.passed))
-                } label: {
-                    Label("通过", systemImage: "checkmark.circle")
-                }
-                .tint(.green)
+                Button("取消", role: .cancel) { }
             }
         }
     }
@@ -860,7 +935,7 @@ struct StageSelectorView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 List {
-                    // 阶段选择
+                    // 阶段择
                     Section {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
@@ -890,7 +965,7 @@ struct StageSelectorView: View {
                             .padding(.vertical, 8)
                         }
                     } header: {
-                        Text("选择阶段")
+                        Text("择阶段")
                     }
                     
                     // 时间选择
@@ -1020,7 +1095,7 @@ struct NoteEditorView: View {
     }
 }
 
-// 修改地点选择组件
+// ���改地点选择组件
 struct LocationSelectionView: View {
     let stage: InterviewStage
     @Binding var locationType: LocationType
@@ -1049,7 +1124,7 @@ struct LocationSelectionView: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: locationType) { _, newValue in
-                // 换类型时保存当前地址并恢复之前的地址
+                // 换型时保存当前地址并恢复之前的地址
                 if newValue == .online {
                     offlineAddress = address
                     address = onlineAddress
@@ -1406,7 +1481,7 @@ struct StageDetailView: View {
                 Button("在高德地图中打开") {
                     openInAmap(address: location.address)
                 }
-                Button("在苹果地图中打开") {
+                Button("在���地图中打开") {
                     openInAppleMaps(address: location.address)
                 }
                 Button("取消", role: .cancel) { }

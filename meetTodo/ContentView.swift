@@ -35,11 +35,13 @@ struct ContentView: View {
     @State private var editingText = ""
     @State private var showingError = false
     @State private var errorMessage = ""
+    @State private var isEditing = false
     @State private var cardStates: [ProcessType: Int] = [
         .application: 0,
         .interview: 0,
         .written: 0
     ]
+    @State private var selectedItem: Item?
     
     private func addNewStage() {
         let trimmedName = newStageName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -93,14 +95,53 @@ struct ContentView: View {
     
     var statistics: [ProcessType: [Int]] {
         var stats: [ProcessType: [Int]] = [:]
-        for type in [ProcessType.application, .interview, .written] {
-            let typeItems = filteredItems.filter { $0.processType == type }
-            let total = typeItems.count
-            let inProgress = typeItems.filter { $0.status != ProcessStatus.failed && $0.status != ProcessStatus.offer }.count
-            let completed = typeItems.filter { $0.status == ProcessStatus.offer }.count
-            let rate = total > 0 ? Int((Double(completed) / Double(total)) * 100) : 0
-            stats[type] = [total, inProgress, rate]
+        
+        // 投递公司统计
+        let applications = filteredItems
+        let totalApplications = applications.count
+        let inProgressApplications = applications.filter { $0.status != .failed && $0.status != .offer }.count
+        let completedApplications = applications.filter { $0.status == .offer }.count
+        let applicationRate = totalApplications > 0 ? Int((Double(completedApplications) / Double(totalApplications)) * 100) : 0
+        stats[.application] = [totalApplications, inProgressApplications, applicationRate]
+        
+        // 面试统计（包含所有轮次面试和HR面）
+        var totalInterviews = 0
+        var passedInterviews = 0
+        
+        for item in applications {
+            // 计算普通面试轮次
+            let normalInterviews = item.stages.filter { stageData in
+                stageData.stage == InterviewStage.interview.rawValue
+            }
+            totalInterviews += normalInterviews.count
+            passedInterviews += normalInterviews.filter { $0.status == StageStatus.passed.rawValue }.count
+            
+            // 计算HR面
+            let hrInterviews = item.stages.filter { stageData in
+                stageData.stage == InterviewStage.hrInterview.rawValue
+            }
+            totalInterviews += hrInterviews.count
+            passedInterviews += hrInterviews.filter { $0.status == StageStatus.passed.rawValue }.count
         }
+        
+        let interviewRate = totalInterviews > 0 ? Int((Double(passedInterviews) / Double(totalInterviews)) * 100) : 0
+        stats[.interview] = [totalInterviews, passedInterviews, interviewRate]
+        
+        // 笔试统计
+        let written = applications.filter { item in
+            item.stages.contains { stageData in
+                stageData.stage == InterviewStage.written.rawValue
+            }
+        }
+        let totalWritten = written.count
+        let passedWritten = written.filter { item in
+            item.stages.contains { stageData in
+                stageData.stage == InterviewStage.written.rawValue && stageData.status == StageStatus.passed.rawValue
+            }
+        }.count
+        let writtenRate = totalWritten > 0 ? Int((Double(passedWritten) / Double(totalWritten)) * 100) : 0
+        stats[.written] = [totalWritten, passedWritten, writtenRate]
+        
         return stats
     }
     
@@ -192,6 +233,21 @@ struct ContentView: View {
                                                                 .foregroundColor(stage.isSelected ? .blue : .gray)
                                                             Text(stage.name)
                                                                 .foregroundColor(.primary)
+                                                            
+                                                            Spacer()
+                                                            
+                                                            // 投递公司统计
+                                                            let companies = items.filter { $0.recruitmentStage?.id == stage.id }
+                                                            if !companies.isEmpty {
+                                                                HStack(spacing: 2) {
+                                                                    Image(systemName: "building.2")
+                                                                        .foregroundColor(.red)
+                                                                    Text("\(companies.count)")
+                                                                        .font(.caption)
+                                                                        .foregroundColor(.red)
+                                                                }
+                                                                .padding(.leading, 8)
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -281,34 +337,52 @@ struct ContentView: View {
                     
                     // 公司列表
                     List {
-                        ForEach(filteredItems) { item in
-                            NavigationLink {
-                                CompanyDetailView(item: item)
-                            } label: {
-                                CompanyRow(item: item)
+                        ForEach(filteredItems.sorted { item1, item2 in
+                            // 首先按置顶状态排序
+                            if item1.isPinned != item2.isPinned {
+                                return item1.isPinned
                             }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    withAnimation {
-                                        modelContext.delete(item)
-                                    }
-                                } label: {
-                                    Label("删除", systemImage: "trash")
+                            // 然后按时间戳排序
+                            return item1.timestamp > item2.timestamp
+                        }) { item in
+                            CompanyRow(item: item)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectedItem = item
                                 }
-                            }
-                            .swipeActions(edge: .leading) {
-                                Button {
-                                    withAnimation {
-                                        item.isPinned.toggle()
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        withAnimation {
+                                            modelContext.delete(item)
+                                        }
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
                                     }
-                                } label: {
-                                    Label(item.isPinned ? "取消置顶" : "置顶",
-                                          systemImage: item.isPinned ? "pin.slash" : "pin")
                                 }
-                                .tint(.orange)
+                                .swipeActions(edge: .leading) {
+                                    Button {
+                                        withAnimation {
+                                            item.isPinned.toggle()
+                                        }
+                                    } label: {
+                                        Label(item.isPinned ? "取消置顶" : "置顶", 
+                                              systemImage: item.isPinned ? "pin.slash" : "pin")
+                                    }
+                                    .tint(.orange)
+                                }
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        }
+                        .onMove { from, to in
+                            var items = filteredItems
+                            items.move(fromOffsets: from, toOffset: to)
+                            // 更新时间戳以保持顺序
+                            for (index, item) in items.enumerated() {
+                                item.timestamp = Date().addingTimeInterval(Double(-index))
                             }
                         }
                     }
+                    .listStyle(.plain)
                 }
                 
                 // 浮动添加按钮
@@ -342,6 +416,15 @@ struct ContentView: View {
                     modelContext.insert(newItem)
                     showingAddSheet = false
                 }
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    EditButton()
+                        .opacity(0) // 隐藏编辑按钮但保持功能
+                }
+            }
+            .navigationDestination(item: $selectedItem) { item in
+                CompanyDetailView(item: item)
             }
         }
         .task {
@@ -470,8 +553,7 @@ struct AddCompanyView: View {
                                     .frame(width: 44, height: 44)
                                     .background(
                                         RoundedRectangle(cornerRadius: 10)
-                                            .fill(icon == companyIcon ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
-                                    )
+                                            .fill(icon == companyIcon ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1)))
                             }
                         }
                     }
@@ -532,82 +614,125 @@ struct AddCompanyView: View {
 struct CompanyRow: View {
     let item: Item
     
-    var progressColor: Color {
-        item.status.color
-    }
-    
-    var formattedDate: String {
-        guard let date = item.nextStageDate else { return "" }
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
-        return timeFormatter.string(from: date)
-    }
-    
-    var formattedDay: String {
-        guard let date = item.nextStageDate else { return "" }
-        let dayFormatter = DateFormatter()
-        dayFormatter.dateFormat = "yyyy年MM月dd日"
-        return dayFormatter.string(from: date)
+    var formattedTime: String? {
+        guard let nextDate = item.nextStageDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年MM月dd日 HH:mm"
+        return formatter.string(from: nextDate)
     }
     
     var body: some View {
-        HStack(spacing: 12) {
-            // 公司图标
-            ZStack {
-                Image(systemName: item.companyIcon)
-                    .font(.title2)
-                    .foregroundColor(.blue)
-                    .frame(width: 40, height: 40)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(8)
-                
-                if item.isPinned {
-                    Image(systemName: "pin.fill")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                        .offset(x: 15, y: -15)
-                }
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.companyName)
-                    .font(.headline)
-                HStack {
-                    Text(item.currentStage)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    if item.nextStageDate != nil {
-                        Text(formattedDay)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+        VStack(spacing: 4) {
+            HStack(spacing: 12) {
+                // 公司图标
+                ZStack {
+                    if let iconData = item.iconData,
+                       let uiImage = UIImage(data: iconData) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 44, height: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.blue.opacity(0.1))
+                            .frame(width: 44, height: 44)
+                            .overlay {
+                                Image(systemName: item.companyIcon)
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.blue)
+                            }
+                    }
+                    
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                            .offset(x: 18, y: -18)
                     }
                 }
+                
+                // 公司信息
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.companyName)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    HStack(spacing: 8) {
+                        Text(item.currentStage)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        if let time = formattedTime {
+                            Text(time)
+                                .font(.subheadline)
+                                .foregroundColor(.blue)
+                        }
+                    }
+                }
+                
+                Spacer()
             }
             
-            Spacer()
-            
-            // 时间显示
-            if let _ = item.nextStageDate {
-                Text(formattedDate)
-                    .font(.title3.bold())
-                    .foregroundColor(.blue)
-                    .frame(minWidth: 60)
+            // 进度条
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.1))
+                        .frame(height: 3)
+                        .cornerRadius(1.5)
+                    
+                    Rectangle()
+                        .fill(item.status.color)
+                        .frame(width: geometry.size.width * CGFloat(item.status.percentage) / 100, height: 3)
+                        .cornerRadius(1.5)
+                }
             }
+            .frame(height: 3)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
-        .background(
-            GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(progressColor.opacity(0.15))
-                        .frame(width: geometry.size.width * CGFloat(item.status.percentage) / 100)
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.05))
+        .background(getStatusColor(for: item))
+        .cornerRadius(12)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+    }
+    
+    private func getStatusColor(for item: Item) -> Color {
+        // 获取最新的阶段（按照阶段顺序和面试轮次排序）
+        let sortedStages = item.stages.sorted { stage1, stage2 in
+            let stageOrder: [InterviewStage] = [.resume, .written, .interview, .hrInterview, .offer]
+            let index1 = stageOrder.firstIndex(of: InterviewStage(rawValue: stage1.stage) ?? .resume) ?? 0
+            let index2 = stageOrder.firstIndex(of: InterviewStage(rawValue: stage2.stage) ?? .resume) ?? 0
+            
+            if index1 == index2 {
+                if stage1.stage == InterviewStage.interview.rawValue {
+                    return (stage1.interviewRound ?? 0) > (stage2.interviewRound ?? 0)
                 }
+                return stage1.date > stage2.date
             }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+            return index1 > index2
+        }
+        
+        guard let latestStage = sortedStages.first else {
+            return Color.gray.opacity(0.1) // 没有阶段时显示灰色
+        }
+        
+        // 检查是否有通过的Offer
+        if latestStage.stage == InterviewStage.offer.rawValue &&
+           latestStage.status == StageStatus.passed.rawValue {
+            return Color.green.opacity(0.1) // Offer通过显示浅绿色
+        }
+        
+        // 根据最新阶段的状态显示颜色
+        switch latestStage.status {
+        case StageStatus.failed.rawValue:
+            return Color.red.opacity(0.1)
+        case StageStatus.passed.rawValue:
+            return Color.green.opacity(0.1)
+        default:
+            return Color.blue.opacity(0.1) // 进行中显示蓝色
+        }
     }
 }
 
@@ -638,7 +763,7 @@ struct IconPickerView: View {
                     }
                 }
             }
-            .navigationTitle("选择图标")
+            .navigationTitle("选择图��")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -659,7 +784,7 @@ struct AddStageView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("阶段名称（如：秋招、春招）", text: $stageName)
+                TextField("阶段名称（如：秋招、春��）", text: $stageName)
             }
             .navigationTitle("添加阶段")
             .navigationBarItems(
